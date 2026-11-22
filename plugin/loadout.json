@@ -22,7 +22,7 @@
         "security-review"
       ]
     },
-    "文档办公": {
+    "Docs": {
       "groups": [],
       "skills": [
         "anthropic-skills:docx",

@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  DEFAULT_PREFS,
   deleteGroup,
   describeSelection,
   entryName,
@@ -8,18 +9,25 @@ import {
   groupSkills,
   inGroup,
   isLoose,
+  libraryFileText,
+  listingDescriptions,
   markerName,
   moveSkills,
   normalizeConfig,
   pickOption,
   promptMark,
+  readLibraryFile,
+  readNextSession,
   renameGroup,
+  setChanges,
   setNamedIn,
   resolvePreset,
   toPreset,
+  usedNextSession,
   withoutSkill,
   withSkill,
 } from './listing'
+import { languageFromSetting, languageOf } from './i18n'
 
 // In a test the skills come from the listing alone, with no source: a name with a
 // colon counts as a plugin's, any other as loose.
@@ -71,6 +79,18 @@ type Body = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
 const HOME = '/home/me'
 const LIBRARY_PATH = `${HOME}/.skill-loadout/library.json`
 const CATALOG_PATH = `${HOME}/.skill-loadout/claude-code-skills.json`
+const NEXT_PATH = `${HOME}/.skill-loadout/next-session.json`
+const CLIENT_PATH = `${HOME}/.skill-loadout/client.json`
+
+/** A set the tray client prepared just now (the tests' clock stands at 0): 只要图片 plus code-review. */
+const NEXT = {
+  version: 1,
+  basedOn: '只要图片',
+  groups: ['g:图'],
+  skills: ['code-review'],
+  createdAt: new Date(0).toISOString(),
+  usedBy: null,
+}
 
 /** A library.json as another tool or the person might write it. */
 const LIBRARY = {
@@ -127,9 +147,15 @@ function engine(
     hold?: boolean
     /** Runs an Agent tool call, as core starts its subagent. */
     onAgent?: (call: AgentCall) => Promise<void>
+    /** Runs as each card shows, before it is answered: another tool may change the files meanwhile. */
+    onAsk?: (asked: readonly Asked[], files: Map<string, string>) => void
+    /** The language an earlier session came to; Chinese unless a test says otherwise, null for none. */
+    language?: 'zh' | 'en' | null
   } = {},
 ): Fake {
   const store = new Map<string, unknown>()
+  const language = options.language === undefined ? 'zh' : options.language
+  if (language !== null) store.set('language', language)
   const files = new Map<string, string>(Object.entries(options.files ?? {}))
   const answers = [...(options.answers ?? [])]
   const asked: Asked[] = []
@@ -191,6 +217,7 @@ function engine(
     const question = e.questions[0]
     if (question === undefined) return { deny: 'no question' }
     asked.push({ question: question.question, options: question.options })
+    options.onAsk?.(asked, files)
     const answer = answers.shift()
     if (answer === undefined || answer === null) return { deny: 'dismissed' }
     return { result: { questions: e.questions, answers: { [question.question]: answer } } }
@@ -554,8 +581,180 @@ test('the skills Claude Code has are written for other tools', async ($, on) => 
   await start($)
   const seen = fileOf(fake, CATALOG_PATH)
   expect(seen['platform']).toBe('claude-code')
+  expect(Array.isArray(seen['alwaysOn'])).toBe(true)
   const names = (seen['skills'] as { name: string; lastSeen: number }[]).map(skill => skill.name)
   expect(names).toEqual([...NAMES].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+})
+
+test('library.json keeps its language and the fields other tools add, and they cannot override its own', () => {
+  const read = readLibraryFile({ ...LIBRARY, language: 'en', client: { window: [800, 600] } })
+  expect(read?.prefs.language).toBe('en')
+  expect(read?.extra).toEqual({ client: { window: [800, 600] } })
+  const again = JSON.parse(libraryFileText(read!.library, read!.prefs, read!.extra)) as Record<string, unknown>
+  expect(again['language']).toBe('en')
+  expect(again['client']).toEqual({ window: [800, 600] })
+  expect(again['agents']).toEqual(LIBRARY.agents)
+  // A language it does not know reads as auto; another tool's field never stands in for the plugin's own.
+  expect(readLibraryFile({ language: 'fr' })?.prefs.language).toBe('auto')
+  const guarded = JSON.parse(libraryFileText({ groups: {}, presets: {} }, DEFAULT_PREFS, { version: 9, agents: 'x' }))
+  expect([guarded.version, guarded.agents]).toEqual([1, {}])
+})
+
+test('a set prepared in the client is on offer for two hours, to one session, when well formed', () => {
+  const at = Date.parse('2026-11-23T10:00:00Z')
+  const file = { ...NEXT, groups: ['图'], createdAt: '2026-11-23T09:30:00Z' }
+  expect(readNextSession(file, at)).toEqual({
+    basedOn: '只要图片',
+    preset: { groups: ['g:图'], skills: ['code-review'] },
+    createdAt: Date.parse('2026-11-23T09:30:00Z'),
+  })
+  expect(readNextSession({ ...file, createdAt: '2026-11-23T07:59:00Z' }, at)).toBe(undefined)
+  expect(readNextSession({ ...file, usedBy: 'S9' }, at)).toBe(undefined)
+  expect(readNextSession({ ...file, version: 2 }, at)).toBe(undefined)
+  expect(readNextSession({ ...file, groups: [], skills: [] }, at)).toBe(undefined)
+  expect(readNextSession({ ...file, basedOn: '' }, at)?.basedOn).toBe(null)
+  expect(JSON.parse(usedNextSession(file, 'S1', at))).toEqual({ ...file, usedBy: 'S1', usedAt: '2026-11-23T10:00:00.000Z' })
+})
+
+test('a listing gives each skill its description, lines that continue it included', () => {
+  expect(listingDescriptions(LISTING, NAMES)).toEqual({
+    'image-prompt': '把画面想法转成摄影提示词。',
+    'remotion-render': 'Export a Remotion video',
+    'anthropic-skills:docs': 'docs (editable docs people share) a second line of the docs description',
+    'code-review': 'Review the current diff',
+    'update-config': 'Use this skill to configure the harness',
+  })
+  expect(setChanges(['a', 'b', 'c'], ['a', 'd'])).toEqual({ added: 2, removed: 1 })
+})
+
+test('the card offers the set prepared in the client first, and taking it marks it used', async ($, on) => {
+  const fake = engine(on, {
+    answers: ['客户端里调好的'],
+    files: { [LIBRARY_PATH]: JSON.stringify(LIBRARY), [NEXT_PATH]: JSON.stringify(NEXT) },
+  })
+  await start($)
+  await say($, '帮我出一张海报')
+  expect(fake.asked[0]?.question).toBe('这个会话用哪套技能？')
+  expect(fake.asked[0]?.options.map(option => option.label)).toEqual(['客户端里调好的', '只要图片', '设计', '不限制'])
+  expect(fake.asked[0]?.options[0]?.description).toBe('基于「只要图片」 +1 · 2 个 skill · 刚调好')
+
+  const text = await listing($)
+  expect(text).toContain('- image-prompt:')
+  expect(text).toContain('- code-review:')
+  expect(text.includes('- remotion-render:')).toBe(false)
+  expect(fileOf(fake, NEXT_PATH)['usedBy']).toBe('S1')
+  await $.turn.start({ text: '帮我出一张海报', turnId: 't1' })
+  expect((fake.store.get('locks') as Record<string, { label: string }>)['S1']?.label).toBe('只要图片（改过）')
+})
+
+test('each round of the card reads the files again; 客户端 typed with nothing prepared asks again', async ($, on) => {
+  const withNew = { ...LIBRARY, agents: { ...LIBRARY.agents, 新的: { groups: [], skills: ['code-review'] } } }
+  const fake = engine(on, {
+    answers: ['客户端', '新的'],
+    files: {
+      [LIBRARY_PATH]: JSON.stringify(LIBRARY),
+      [CLIENT_PATH]: JSON.stringify({ path: '/apps/skill-loadout.exe' }),
+      '/apps/skill-loadout.exe': '',
+    },
+    // While the first card waits, the client adds an Agent.
+    onAsk: (asked, files) => {
+      if (asked.length === 1) files.set(LIBRARY_PATH, JSON.stringify(withNew))
+    },
+  })
+  await start($)
+  await say($, '写代码')
+  expect(fake.asked.map(one => one.question)).toEqual([
+    '要临时增减 skill：在客户端里调好后，在 Other 里输入「客户端」。这个会话用哪套技能？',
+    '客户端里现在没有调好的一套（没调过、超过两小时，或者已经被别的会话用了）。这个会话用哪套技能？',
+  ])
+  expect(fake.asked[1]?.options.map(option => option.label)).toEqual(['只要图片', '设计', '新的', '不限制'])
+  const text = await listing($)
+  expect(text).toContain('- code-review:')
+  expect(text.includes('- image-prompt:')).toBe(false)
+})
+
+test('/loadout 客户端 takes the prepared set before the first message, and the card is not shown', async ($, on) => {
+  const fake = engine(on, { files: { [LIBRARY_PATH]: JSON.stringify(LIBRARY), [NEXT_PATH]: JSON.stringify(NEXT) } })
+  await start($)
+  const ran = await $.command.run({
+    command: 'loadout',
+    args: '客户端',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 100 },
+  })
+  expect(ran.text).toBe('这个会话改用客户端里调好的一套（只要图片（改过）），发出第一条消息后锁定。')
+  expect(fileOf(fake, NEXT_PATH)['usedBy']).toBe('S1')
+  await say($, '你好')
+  expect(fake.asked.length).toBe(0)
+  expect(await listing($)).toContain('- code-review:')
+})
+
+test('the plugin keeps other tools’ fields when it saves library.json, and writes each skill’s description', async ($, on) => {
+  const kept = { ...LIBRARY, askOnNewSession: false, language: 'en', client: { window: [800, 600] } }
+  const fake = engine(on, { files: { [LIBRARY_PATH]: JSON.stringify(kept) } })
+  await start($)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'manage' })
+  await ui.press({ key: 'ask-toggle' })
+  await ui.unmount()
+  const saved = fileOf(fake, LIBRARY_PATH)
+  expect([saved['askOnNewSession'], saved['language'], saved['client']]).toEqual([true, 'en', { window: [800, 600] }])
+
+  const skills = fileOf(fake, CATALOG_PATH)['skills'] as { name: string; description?: string }[]
+  expect(skills.find(skill => skill.name === 'remotion-render')?.description).toBe('Export a Remotion video')
+  expect(skills.find(skill => skill.name === 'figma:figma-use')?.description).toBe(undefined)
+})
+
+test('a message tells its language by its script; Claude Code’s language setting names one of the two', () => {
+  expect([languageOf('帮我出一张海报'), languageOf('make a poster'), languageOf('123 ✓')]).toEqual(['zh', 'en', undefined])
+  expect([languageFromSetting('chinese'), languageFromSetting('English'), languageFromSetting('日本語')]).toEqual([
+    'zh',
+    'en',
+    undefined,
+  ])
+})
+
+test('with nothing to go by, the card speaks the language of the first message, and the next session keeps it', async ($, on) => {
+  const fake = engine(on, { language: null, answers: ['No limit'], files: { [LIBRARY_PATH]: JSON.stringify(LIBRARY) } })
+  await start($)
+  await say($, 'make me a poster')
+  expect(fake.asked[0]?.question).toBe('Which skill set for this session?')
+  expect(fake.asked[0]?.options.map(option => option.label)).toEqual(['只要图片', '设计', 'No limit'])
+  expect(fake.asked[0]?.options[0]?.description).toBe('图 · 1 skill')
+  expect(fake.asked[0]?.options[2]?.description).toBe('Every skill (6)')
+  expect(fake.toasts.at(-1)).toBe('This session uses "No limit", 6 skills')
+  expect(fake.store.get('language')).toBe('en')
+  expect(await listing($)).toBe(LISTING)
+})
+
+test('a language set in library.json wins over the message, and either language’s words are understood', async ($, on) => {
+  const fake = engine(on, {
+    answers: ['不限制'],
+    files: { [LIBRARY_PATH]: JSON.stringify({ ...LIBRARY, language: 'en' }) },
+  })
+  await start($)
+  await say($, '帮我出一张海报')
+  expect(fake.asked[0]?.question).toBe('Which skill set for this session?')
+  // 不限制 typed under "Other" picks the English card's own option.
+  expect(fake.toasts.at(-1)).toBe('This session uses "No limit", 6 skills')
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /6 \/ 6 skills loaded/ })).toBeDefined()
+  expect((await ui.find({ key: 'manage' }))?.props['label']).toBe('Manage')
+  await ui.unmount()
+})
+
+test('the client’s prepared set shows on an English card too, with its note in English', async ($, on) => {
+  const fake = engine(on, {
+    language: 'en',
+    answers: ['Prepared in the client'],
+    files: { [LIBRARY_PATH]: JSON.stringify(LIBRARY), [NEXT_PATH]: JSON.stringify(NEXT) },
+  })
+  await start($)
+  await say($, '42')
+  expect(fake.asked[0]?.options.map(option => option.label)).toEqual(['Prepared in the client', '只要图片', '设计', 'No limit'])
+  expect(fake.asked[0]?.options[0]?.description).toBe('Based on "只要图片" +1 · 2 skills · prepared just now')
+  expect(fileOf(fake, NEXT_PATH)['usedBy']).toBe('S1')
 })
 
 test('an Agent picked before the skills are known is worked out when they are', async ($, on) => {
@@ -711,7 +910,8 @@ test('the main agent names a subagent’s skills in its prompt; others and forks
   expect(own).toContain('Skill loadout "只要图片": 5 more installed skills are not loaded for this subagent')
   expect(fake.spawned[0]?.prompt).toContain('(Skill loadout "只要图片" for this task — skills you may use: image-prompt.')
   const denied = (await $.tool.call({ tool: 'Skill', skill: 'figma:figma-use', agentId: 'A1' } as never)) as { deny?: string }
-  expect(denied.deny).toContain('不在这个子代理')
+  // The model reads it, so it is in English whatever the person's language.
+  expect(denied.deny).toContain("is not in this subagent's skill set")
   // No line, or a fork: the session's set, and the task as it was.
   expect(await listingOf($, 'A2')).toContain('figma:figma-use')
   expect((await listingOf($, 'A2')).includes('- image-prompt:')).toBe(false)

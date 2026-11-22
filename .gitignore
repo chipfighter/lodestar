@@ -1,4 +1,12 @@
 # Written by Claude Code when it loads the plugin: the API types for the editor.
-.claude-plugin/types/
+**/.claude-plugin/types/
 .DS_Store
 *.log
+# A local preview setup for Claude Code's browser pane.
+.claude/launch.json
+
+# The tray client's dependencies and build output.
+client/node_modules/
+client/dist/
+client/src-tauri/target/
+client/src-tauri/gen/schemas/

@@ -51,10 +51,11 @@ test('the bar above the prompt shows while the panel is not open, and brings it 
   // The first message asks on a card, so the panel does not open on its own.
   expect(opens).toBe(0)
 
+  // Nothing says which language the person uses yet (no setting, no message, no earlier session): English.
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
     expect((await ui.find({ type: 'Text', text: /\// }))?.text).toBe('2/2')
-    expect(await ui.find({ type: 'Text', text: /发第一条消息时会问你/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /asks at the first message/ })).toBeDefined()
     expect(await ui.find({ key: 'band:open' })).toBeDefined()
     await ui.unmount()
   }

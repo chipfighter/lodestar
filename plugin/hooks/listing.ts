@@ -1,21 +1,18 @@
-import type { Library, LoadoutConfig, Prefs, Preset, SkillEntry } from '../types'
+import type { Language, Library, LoadoutConfig, NextSession, Prefs, Preset, SkillEntry } from '../types'
+import { WORDS, type Lang } from './i18n'
 
 export const DEFAULT_CONFIG: LoadoutConfig = { alwaysOn: [], groups: {}, presets: {} }
 
 /** The settings a library.json without them has. */
-export const DEFAULT_PREFS: Prefs = { askOnNewSession: true, subagentPicker: 'agent' }
+export const DEFAULT_PREFS: Prefs = { askOnNewSession: true, subagentPicker: 'agent', language: 'auto' }
+
+const LANGUAGES: readonly Language[] = ['auto', 'zh', 'en']
 
 /** The id of the bucket that holds the loose skills no group took. */
 export const UNGROUPED_ID = 'u:'
 
 /** Where a skill counts as installed loose: a folder of its own, not part of a plugin. */
 const LOOSE_SOURCES = new Set(['userSettings', 'projectSettings', 'syncedSkills'])
-
-const SOURCE_LABEL: Record<string, string> = {
-  'built-in': 'Claude 自带',
-  policySettings: '组织',
-  mcp: 'MCP',
-}
 
 /**
  * A group the panel shows. `custom`: one the person made from loose skills;
@@ -169,7 +166,9 @@ export function groupSkills(
   catalog: readonly SkillEntry[],
   library: Record<string, string[]>,
   isEmptyShown = false,
+  lang: Lang = 'zh',
 ): Group[] {
+  const words = WORDS[lang]
   const loose = catalog.filter(isLoose).map(skill => skill.name)
   const assigned = new Set<string>()
   const custom: Group[] = []
@@ -180,7 +179,7 @@ export function groupSkills(
   }
   const rest = loose.filter(name => !assigned.has(name))
   const ungrouped: Group[] =
-    rest.length > 0 ? [{ id: UNGROUPED_ID, label: '未归组', names: rest, kind: 'ungrouped' }] : []
+    rest.length > 0 ? [{ id: UNGROUPED_ID, label: words.ungrouped, names: rest, kind: 'ungrouped' }] : []
   const fixed = new Map<string, Group>()
   for (const skill of catalog) {
     if (isLoose(skill)) continue
@@ -190,10 +189,10 @@ export function groupSkills(
     const id = plugin ? `p:${plugin}` : `s:${skill.source ?? 'other'}`
     const group: Group = fixed.get(id) ?? {
       id,
-      label: plugin ?? SOURCE_LABEL[skill.source ?? ''] ?? '其他',
+      label: plugin ?? words.sources[skill.source ?? ''] ?? words.otherSource,
       names: [],
       kind: 'fixed',
-      ...(plugin ? { tag: '插件' } : {}),
+      ...(plugin ? { tag: words.pluginTag } : {}),
     }
     group.names.push(skill.name)
     fixed.set(id, group)
@@ -230,21 +229,49 @@ export function signature(allow: readonly string[] | null): string {
   return allow === null ? '*' : [...new Set(allow)].sort().join('\n')
 }
 
+// The card's own options, in Chinese (the names below) and in English. Either language's
+// words are understood whichever the card shows, as a person may type either under "Other".
+
+const both = (pick: (words: (typeof WORDS)['zh']) => string): string[] => [pick(WORDS.zh), pick(WORDS.en)]
+
 /** The name of the loadout that holds every skill. */
-export const UNLIMITED = '不限制'
+export const UNLIMITED = WORDS.zh.unlimited
 
 /** Words that name 不限制 when typed. */
-export const ALL_WORDS: readonly string[] = [UNLIMITED, '全部', 'all']
+export const ALL_WORDS: readonly string[] = [...both(words => words.unlimited), '全部', 'all', 'unlimited', 'every skill']
 
 /** The card's option for the next Agents, when there are more than it holds. */
-export const MORE = '更多 Agent…'
+export const MORE = WORDS.zh.more
+export const MORE_LABELS: readonly string[] = both(words => words.more)
 
 /** What the card asks when a conversation's first message is sent. */
-export const ASK_QUESTION = '这个会话用哪套技能？'
+export const ASK_QUESTION = WORDS.zh.ask
+export const ASK_QUESTIONS: readonly string[] = both(words => words.ask)
 
 /** The subagent card's option for keeping the skills it would get anyway: its parent's. */
-export const SAME_AS_MAIN = '和主会话一样'
-export const SAME_AS_PARENT = '和上级代理一样'
+export const SAME_AS_MAIN = WORDS.zh.sameAsMain
+export const SAME_AS_PARENT = WORDS.zh.sameAsParent
+export const SAME_LABELS: readonly string[] = [...both(words => words.sameAsMain), ...both(words => words.sameAsParent)]
+
+/** The card's option for the set the tray client prepared for the next session. */
+export const CLIENT_PICK = WORDS.zh.clientPick
+export const CLIENT_LABELS: readonly string[] = both(words => words.clientPick)
+
+/** Words that name the client's prepared set when typed under "Other". */
+export const CLIENT_WORDS: readonly string[] = ['客户端', 'client', ...CLIENT_LABELS]
+
+/** Names an Agent may not take: they mean something else on the card. */
+export const RESERVED_NAMES: readonly string[] = [...ALL_WORDS, ...MORE_LABELS, ...SAME_LABELS, ...CLIENT_LABELS]
+
+/** The longest name an Agent or a group takes. */
+export const MAX_NAME = 40
+
+/** Whether an answer typed under "Other" asks for the client's prepared set. */
+export function isClientWord(answer: string): boolean {
+  const typed = answer.trim().toLowerCase()
+
+  return CLIENT_WORDS.some(word => word.toLowerCase() === typed)
+}
 
 /** The Agents in the order the card offers them: the one this folder used last comes first. */
 export function agentOrder(names: readonly string[], last: string | null): string[] {
@@ -259,13 +286,14 @@ export function askPage(
   pool: readonly string[],
   start: number,
   fixed: readonly string[] = [UNLIMITED],
+  more: string = MORE,
 ): { options: string[]; next: number } {
   if (pool.length + fixed.length <= 4) return { options: [...pool, ...fixed], next: 0 }
   const size = Math.max(1, 3 - fixed.length)
   const from = start >= 0 && start < pool.length ? start : 0
   const next = from + size >= pool.length ? 0 : from + size
 
-  return { options: [...pool.slice(from, from + size), MORE, ...fixed], next }
+  return { options: [...pool.slice(from, from + size), more, ...fixed], next }
 }
 
 /**
@@ -279,8 +307,10 @@ export function pickOption(answer: string, offered: readonly string[], agents: r
   if (offered.includes(typed)) return typed
   const quoted = [...typed.matchAll(/["“「『]([^"”」』]+)["”」』]/g)].map(match => (match[1] ?? '').trim())
   for (const one of quoted.reverse()) if (offered.includes(one)) return one
-  const named = answerAgent(typed, agents)
+  const named = answerAgent(typed, agents, offered.includes(WORDS.en.unlimited) ? 'en' : 'zh')
   if (named !== null) return named
+  const client = offered.find(label => CLIENT_LABELS.includes(label))
+  if (client !== undefined && isClientWord(typed)) return client
   const lower = typed.toLowerCase()
   const longest = (labels: readonly string[], test: (label: string) => boolean): string | undefined =>
     labels.filter(label => label !== '' && test(label.toLowerCase())).sort((a, b) => b.length - a.length)[0]
@@ -303,14 +333,21 @@ export function loadoutNote(label: string, names: readonly string[]): string {
 }
 
 /** The note on the main conversation's first listing: the user's skill sets, and how a subagent gets one. */
-export function subagentBrief(choices: readonly { name: string; summary: string }[], picker: Prefs['subagentPicker']): string {
-  const sets = [...choices.map(one => `${one.name} (${one.summary})`), `${UNLIMITED} (every skill)`].join('; ')
+export function subagentBrief(
+  choices: readonly { name: string; summary: string }[],
+  picker: Prefs['subagentPicker'],
+  lang: Lang = 'zh',
+): string {
+  const sets = [...choices.map(one => `${one.name} (${one.summary})`), `${WORDS[lang].unlimited} (every skill)`].join('; ')
   const example = choices[0]?.name ?? 'Coding'
+  // The line in the person's language: it is theirs to read in the task too.
+  const line = lang === 'zh' ? '技能装配：<set name>' : 'skill loadout: <set name>'
+  const asked = lang === 'zh' ? `用 ${example} 那套技能` : `use the ${example} skills`
   const how =
     picker === 'person'
-      ? 'The user picks the set of each subagent you start, on a card; you may suggest one by adding a line "技能装配：<set name>" to the Agent tool\'s prompt.'
-      : 'To give a subagent you start with the Agent tool one of these sets, add a line "技能装配：<set name>" to its prompt; ' +
-        `do so whenever the user names a set for the work (e.g. "用 ${example} 那套技能"). Without the line the subagent keeps this session's set.`
+      ? `The user picks the set of each subagent you start, on a card; you may suggest one by adding a line "${line}" to the Agent tool's prompt.`
+      : `To give a subagent you start with the Agent tool one of these sets, add a line "${line}" to its prompt; ` +
+        `do so whenever the user names a set for the work (e.g. "${asked}"). Without the line the subagent keeps this session's set.`
 
   return (
     `\n\n(Skill loadout — the user's skill sets for subagents: ${sets}. These sets belong to the Skill Loadout plugin; ` +
@@ -360,22 +397,27 @@ export function spawnedNote(label: string, size: number | null, isPersons: boole
 }
 
 
-/** The Agent an answer names: a label as offered, or a name typed under "Other" in any case; 不限制 for its words. */
-export function answerAgent(answer: string, agents: readonly string[]): string | null {
+/**
+ * The Agent an answer names: a label as offered, or a name typed under "Other" in any case;
+ * for the words of 不限制 in either language, its name in `lang`. An Agent of that name wins.
+ */
+export function answerAgent(answer: string, agents: readonly string[], lang: Lang = 'zh'): string | null {
   const typed = answer.trim()
   if (typed === '') return null
   const lower = typed.toLowerCase()
-  if (ALL_WORDS.some(word => word.toLowerCase() === lower)) return UNLIMITED
+  const named = agents.find(name => name === typed) ?? agents.find(name => name.toLowerCase() === lower)
+  if (named !== undefined) return named
 
-  return agents.find(name => name === typed) ?? agents.find(name => name.toLowerCase() === lower) ?? null
+  return ALL_WORDS.some(word => word.toLowerCase() === lower) ? WORDS[lang].unlimited : null
 }
 
 /** An Agent in one line: its groups by label, then how many single skills it adds. */
-export function agentSummary(preset: Preset, groups: readonly Group[]): string {
-  const parts = preset.groups.map(id => groupLabel(id, groups)).join('、')
-  const extra = preset.skills.length > 0 ? `${parts === '' ? '' : ' + '}${preset.skills.length} 个单独的 skill` : ''
+export function agentSummary(preset: Preset, groups: readonly Group[], lang: Lang = 'zh'): string {
+  const { summary } = WORDS[lang]
+  const parts = preset.groups.map(id => groupLabel(id, groups)).join(summary.sep)
+  const extra = preset.skills.length > 0 ? `${parts === '' ? '' : ' + '}${summary.singles(preset.skills.length)}` : ''
 
-  return parts + extra === '' ? '空' : parts + extra
+  return parts + extra === '' ? summary.empty : parts + extra
 }
 
 /**
@@ -383,33 +425,80 @@ export function agentSummary(preset: Preset, groups: readonly Group[]): string {
  * `presets` as this plugin first stored them) and the settings, each kept only
  * in the right shape. Undefined for anything but an object.
  */
-export function readLibraryFile(raw: unknown): { library: Library; prefs: Prefs } | undefined {
+export function readLibraryFile(
+  raw: unknown,
+): { library: Library; prefs: Prefs; extra: Record<string, unknown> } | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
   const value = raw as Record<string, unknown>
   const { groups, presets } = normalizeConfig({ groups: value.groups, presets: value.agents ?? value.presets })
   const ask = value.askOnNewSession
   const picker = value.subagentPicker
+  const language = LANGUAGES.find(one => one === value.language)
 
   return {
     library: { groups, presets },
     prefs: {
       askOnNewSession: typeof ask === 'boolean' ? ask : DEFAULT_PREFS.askOnNewSession,
       subagentPicker: picker === 'agent' || picker === 'person' ? picker : DEFAULT_PREFS.subagentPicker,
+      language: language ?? DEFAULT_PREFS.language,
     },
+    extra: Object.fromEntries(Object.entries(value).filter(([key]) => !LIBRARY_KEYS.has(key))),
   }
 }
 
-/** library.json's text, in the format other tools read and write. */
-export function libraryFileText(library: Library, prefs: Prefs): string {
+/** The fields of library.json this plugin reads; another tool's own fields are kept as they are. */
+const LIBRARY_KEYS = new Set(['version', 'askOnNewSession', 'subagentPicker', 'language', 'groups', 'agents', 'presets'])
+
+/** library.json's text, in the format other tools read and write, with their own fields (`extra`) kept. */
+export function libraryFileText(library: Library, prefs: Prefs, extra: Readonly<Record<string, unknown>> = {}): string {
   const file = {
     version: 1,
     askOnNewSession: prefs.askOnNewSession,
     subagentPicker: prefs.subagentPicker,
+    language: prefs.language,
     groups: library.groups,
     agents: library.presets,
+    ...Object.fromEntries(Object.entries(extra).filter(([key]) => !LIBRARY_KEYS.has(key))),
   }
 
   return `${JSON.stringify(file, null, 2)}\n`
+}
+
+/** How long a set the client prepared for the next session stays on offer. */
+export const NEXT_SESSION_TTL_MS = 2 * 60 * 60 * 1000
+
+/** How far ahead of this machine's clock a preparation's time may be (another clock's skew). */
+const SKEW_MS = 5 * 60 * 1000
+
+/**
+ * The set next-session.json offers, while a card may still offer it: well
+ * formed, no session used it yet, and prepared at most two hours ago.
+ */
+export function readNextSession(raw: unknown, now: number): NextSession | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  if (value.version !== 1 || !Array.isArray(value.groups) || !Array.isArray(value.skills)) return undefined
+  if (value.usedBy !== undefined && value.usedBy !== null) return undefined
+  const createdAt = typeof value.createdAt === 'string' ? Date.parse(value.createdAt) : Number.NaN
+  if (!Number.isFinite(createdAt) || now - createdAt > NEXT_SESSION_TTL_MS || createdAt - now > SKEW_MS) return undefined
+  const preset = normalizeConfig({ presets: { next: { groups: value.groups, skills: value.skills } } }).presets.next
+  if (preset === undefined || (preset.groups.length === 0 && preset.skills.length === 0)) return undefined
+  const basedOn = typeof value.basedOn === 'string' && value.basedOn.trim() !== '' ? value.basedOn : null
+
+  return { basedOn, preset, createdAt }
+}
+
+/** next-session.json once a session took its set: marked, so that no other session is offered it. */
+export function usedNextSession(raw: Readonly<Record<string, unknown>>, sessionId: string, at: number): string {
+  return `${JSON.stringify({ ...raw, usedBy: sessionId, usedAt: new Date(at).toISOString() }, null, 2)}\n`
+}
+
+/** How a set differs from the one it started from: how many skills it adds and leaves out. */
+export function setChanges(set: readonly string[], base: readonly string[]): { added: number; removed: number } {
+  const from = new Set(base)
+  const to = new Set(set)
+
+  return { added: [...to].filter(name => !from.has(name)).length, removed: [...from].filter(name => !to.has(name)).length }
 }
 
 /** A skill in claude-code-skills.json: as a session listed it, and when one last did. */
@@ -434,10 +523,12 @@ export function mergeSeen(old: unknown, now: readonly SkillEntry[], at: number):
       ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
       ...(typeof entry.plugin === 'string' ? { plugin: entry.plugin } : {}),
       ...(typeof entry.tokens === 'number' ? { tokens: entry.tokens } : {}),
+      ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
       lastSeen: entry.lastSeen,
     })
   }
-  for (const skill of now) byName.set(skill.name, { ...skill, lastSeen: at })
+  // A skill this session has keeps the description an earlier one read, until a listing gives it one.
+  for (const skill of now) byName.set(skill.name, { ...byName.get(skill.name), ...skill, lastSeen: at })
 
   return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 }
@@ -461,12 +552,14 @@ export function describeSelection(
   list: readonly string[] | null,
   activeName: string | null,
   always: readonly string[],
+  lang: Lang = 'zh',
 ): Selection {
+  const words = WORDS[lang]
   const unlimited = (loaded: Set<string>): Selection => ({
     loaded,
     matched: null,
     basedOn: null,
-    label: UNLIMITED,
+    label: words.unlimited,
     isAll: true,
   })
   if (list === null) return unlimited(new Set(names))
@@ -481,7 +574,7 @@ export function describeSelection(
   }
   const basedOn = activeName !== null && activeName in lib.presets ? activeName : null
   const matched = basedOn !== null && isMatch(basedOn) ? basedOn : (Object.keys(lib.presets).find(isMatch) ?? null)
-  const label = matched ?? (basedOn !== null ? `${basedOn}（改过）` : '自定义')
+  const label = matched ?? (basedOn !== null ? words.modified(basedOn) : words.custom)
 
   return { loaded, matched, basedOn, label, isAll: false }
 }
@@ -508,6 +601,41 @@ export function listingNames(text: string, known: readonly string[]): string[] {
     .split('\n')
     .map(line => entryName(line, known))
     .filter((name): name is string => name !== undefined)
+}
+
+/** How long a skill's description in claude-code-skills.json may run. */
+const MAX_DESCRIPTION = 300
+
+/** What each skill of a listing is for: the text after its name, with the lines that continue it, on one line. */
+export function listingDescriptions(text: string, known: readonly string[]): Record<string, string> {
+  const found: Record<string, string> = {}
+  let current: string | undefined
+  let parts: string[] = []
+  const settle = (): void => {
+    if (current === undefined) return
+    const description = parts.join(' ').replace(/\s+/g, ' ').trim()
+    if (description !== '') {
+      found[current] = description.length > MAX_DESCRIPTION ? `${description.slice(0, MAX_DESCRIPTION - 1)}…` : description
+    }
+  }
+  for (const line of text.split('\n')) {
+    const name = entryName(line, known)
+    if (name !== undefined) {
+      settle()
+      current = name
+      const rest = line.slice(2 + name.length)
+      parts = [rest.startsWith(':') ? rest.slice(1) : rest]
+    } else if (line.trim() === '') {
+      settle()
+      current = undefined
+      parts = []
+    } else if (current !== undefined) {
+      parts.push(line)
+    }
+  }
+  settle()
+
+  return found
 }
 
 /**

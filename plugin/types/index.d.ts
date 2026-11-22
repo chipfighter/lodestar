@@ -1,3 +1,7 @@
+// What the plugin shares with other tools through its data folder (library.json,
+// next-session.json, claude-code-skills.json) comes first; the tray client reads
+// these types too. The plugin's own state follows.
+
 /** One skill the session has, as the panel lists it. */
 export type SkillEntry = {
   name: string
@@ -7,6 +11,8 @@ export type SkillEntry = {
   plugin?: string
   /** The listing's estimated tokens for this skill. */
   tokens?: number
+  /** What the skill is for, as the skill listing describes it. */
+  description?: string
 }
 
 /**
@@ -32,6 +38,9 @@ export type LoadoutConfig = {
   presets: Record<string, Preset>
 }
 
+/** The interface's language: `auto` goes by Claude Code's language setting, then the person's first message. */
+export type Language = 'auto' | 'zh' | 'en'
+
 /** The settings library.json keeps beside the groups and Agents. */
 export type Prefs = {
   /** Ask which Agent a new conversation uses when its first message is sent. */
@@ -42,7 +51,16 @@ export type Prefs = {
    * `person`, the user on a card as the subagent starts. A fork keeps its parent's.
    */
   subagentPicker: 'agent' | 'person'
+  /** The language the card, the panel and the tray client speak. */
+  language: Language
 }
+
+/**
+ * The set the tray client prepared for the next session (next-session.json),
+ * as a card offers it: an Agent's shape, the Agent it started from, and when
+ * it was prepared (milliseconds since the epoch).
+ */
+export type NextSession = { basedOn: string | null; preset: Preset; createdAt: number }
 
 /** A subagent's skills, settled as it was spawned. */
 export type SubLoadout = {
@@ -108,6 +126,12 @@ declare module 'claude-code' {
       library: Shaped<Library>
       /** The settings in use, as library.json holds them. */
       prefs: Shaped<Prefs>
+      /** library.json's fields this plugin does not know (another tool's), written back as they were. */
+      extra: Shaped<Record<string, JsonValue>>
+      /** The client-prepared set this session took, to work out again once the session's skills are known. */
+      prepared: Shaped<Preset | null>
+      /** The language `auto` stands for here: from Claude Code's setting, the first message, or the last session's. */
+      detected: Shaped<'zh' | 'en' | null>
       /** Where library.json is, and how reading or writing it last went. */
       dataFile: Shaped<DataFile>
       /** The screen the panel shows. */

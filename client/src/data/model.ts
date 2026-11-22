@@ -1,0 +1,96 @@
+// What the pages show, worked out from the files with the plugin's own rules.
+
+import { groupSkills, matchesAny, resolvePreset, toPreset, type Group } from '@shared/listing'
+import type { Library, Preset, SkillEntry } from '../../../plugin/types'
+
+export type Model = {
+  skills: SkillEntry[]
+  names: string[]
+  byName: Map<string, SkillEntry>
+  /** Every group: the person's, then the ungrouped loose skills, then one per plugin or source. */
+  groups: Group[]
+  /** Each skill's group. */
+  groupOf: Map<string, Group>
+  /** Skills kept in every set. */
+  always: Set<string>
+  /** The Agents each skill is in. */
+  usedBy: Map<string, string[]>
+}
+
+export function buildModel(skills: readonly SkillEntry[], library: Library, alwaysOn: readonly string[]): Model {
+  const names = skills.map(skill => skill.name)
+  const groups = groupSkills(skills, library.groups, true)
+  const groupOf = new Map<string, Group>()
+  for (const group of groups) for (const name of group.names) groupOf.set(name, group)
+  const usedBy = new Map<string, string[]>()
+  for (const [agent, preset] of Object.entries(library.presets)) {
+    for (const name of resolvePreset(preset, groups, names)) usedBy.set(name, [...(usedBy.get(name) ?? []), agent])
+  }
+
+  return {
+    skills: [...skills],
+    names,
+    byName: new Map(skills.map(skill => [skill.name, skill])),
+    groups,
+    groupOf,
+    always: new Set(names.filter(name => matchesAny(alwaysOn, name))),
+    usedBy,
+  }
+}
+
+/** The skills an Agent picks, the always-on ones aside (they are in every set). */
+export function presetSkills(model: Model, preset: Preset): Set<string> {
+  return new Set(resolvePreset(preset, model.groups, model.names).filter(name => !model.always.has(name)))
+}
+
+/** A selection as an Agent stores it: whole groups by id, the rest one by one. */
+export function selectionPreset(model: Model, selected: ReadonlySet<string>): Preset {
+  return toPreset([...selected].filter(name => !model.always.has(name)), model.groups)
+}
+
+/** Everything a set loads: its own skills and the always-on ones. */
+export function loadedOf(model: Model, selected: ReadonlySet<string>): Set<string> {
+  return new Set([...selected, ...model.always])
+}
+
+/** The skill listing's size for these skills, as the plugin estimates it. */
+export function tokensOf(model: Model, names: Iterable<string>): number {
+  let total = 0
+  for (const name of names) total += model.byName.get(name)?.tokens ?? 0
+
+  return total
+}
+
+export function formatTokens(count: number): string {
+  return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count)
+}
+
+/** How a selection differs from another: skills added and skills left out. */
+export function changesFrom(selected: ReadonlySet<string>, base: ReadonlySet<string>): { added: number; removed: number } {
+  return {
+    added: [...selected].filter(name => !base.has(name)).length,
+    removed: [...base].filter(name => !selected.has(name)).length,
+  }
+}
+
+export function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every(name => b.has(name))
+}
+
+/** Whether a skill matches a search: its name or its description holds the text, in any case. */
+export function matchesSearch(skill: SkillEntry, query: string): boolean {
+  const text = query.trim().toLowerCase()
+  if (text === '') return true
+
+  return skill.name.toLowerCase().includes(text) || (skill.description ?? '').toLowerCase().includes(text)
+}
+
+/** A name for a copy of an Agent that no Agent has yet. */
+export function copyName(base: string, taken: readonly string[], suffix: (n: number) => string): string {
+  for (let n = 1; n < 100; n += 1) {
+    const name = `${base}${suffix(n)}`
+    if (!taken.includes(name)) return name
+  }
+
+  return `${base}${suffix(Date.now())}`
+}

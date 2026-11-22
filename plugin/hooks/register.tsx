@@ -1,13 +1,15 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, JsonValue, Register } from 'claude-code'
 
 import type {
   AgentDraft,
   DataFile,
   Library,
   LoadoutConfig,
+  NextSession,
   PaneState,
   PendingSpawn,
+  Preset,
   Prefs,
   SessionLock,
   SkillEntry,
@@ -15,15 +17,16 @@ import type {
   SubLoadout,
   View,
 } from '../types'
+import { WORDS, asLang, languageFromSetting, languageOf, type Lang, type Words } from './i18n'
 import {
   ALL_WORDS,
-  ASK_QUESTION,
+  ASK_QUESTIONS,
+  CLIENT_LABELS,
   DEFAULT_CONFIG,
   DEFAULT_PREFS,
-  MORE,
-  SAME_AS_MAIN,
-  SAME_AS_PARENT,
-  UNLIMITED,
+  MAX_NAME,
+  MORE_LABELS,
+  RESERVED_NAMES,
   agentOrder,
   agentSummary,
   answerAgent,
@@ -34,8 +37,10 @@ import {
   groupLabel,
   groupSkills,
   hiddenNote,
+  isClientWord,
   isLoose,
   libraryFileText,
+  listingDescriptions,
   listingNames,
   loadoutNote,
   markerName,
@@ -46,27 +51,25 @@ import {
   pickOption,
   promptMark,
   readLibraryFile,
+  readNextSession,
   renameGroup,
   resolvePreset,
+  setChanges,
   setNamedIn,
   spawnedNote,
   subagentBrief,
   toPreset,
+  usedNextSession,
 } from './listing'
 import type { Group, Selection } from './listing'
 
 const PANE = 'skill-loadout'
-const TITLE = '技能装配'
+/** The card's header in either language: how this plugin's cards are told from others. */
+const CARD_HEADERS: readonly string[] = [WORDS.zh.cardHeader, WORDS.en.cardHeader]
 /** Names an Agent may not take: they mean something else on the card. */
-const RESERVED = [...ALL_WORDS, MORE, SAME_AS_MAIN, SAME_AS_PARENT]
-/** How a subagent's skills were settled, as the panel says it. */
-const SETTLED_BY: Record<SubLoadout['by'], string> = {
-  agent: '主代理选的',
-  person: '你选的',
-  inherit: '沿用上级',
-  fork: 'fork，沿用上级',
-}
-const MAX_NAME = 40
+const RESERVED = RESERVED_NAMES
+/** The store's key for the language `auto` last came to, for the panel before a session's first message. */
+const LANGUAGE_KEY = 'language'
 /** The store's copy of library.json as last read or written, for when the file is missing or broken. */
 const LIBRARY_KEY = 'library-v2'
 const LOCKS_KEY = 'locks'
@@ -80,6 +83,10 @@ const MIN_MARKED = 20
 const DATA_DIR = '.skill-loadout'
 const LIBRARY_FILE = 'library.json'
 const CATALOG_FILE = 'claude-code-skills.json'
+/** The set the tray client prepared for the next session; the card offers it, and marks it once a session takes it. */
+const NEXT_FILE = 'next-session.json'
+/** Written by the tray client as it starts: the card tells the person how to reach a set prepared there. */
+const CLIENT_FILE = 'client.json'
 /** How many answers that name no Agent the card takes before the conversation starts with what it has. */
 const MAX_MISSES = 3
 /** How many cards one first message shows at most, paging through the Agents included. */
@@ -94,7 +101,9 @@ const catalog = atom({ plugin: 'skill-loadout', key: 'catalog' } as const, [] as
 const expanded = atom({ plugin: 'skill-loadout', key: 'expanded' } as const, [] as string[], { shape: 'expanded-2' })
 const config = atom({ plugin: 'skill-loadout', key: 'config' } as const, DEFAULT_CONFIG, { shape: 'config-2' })
 const library = atom({ plugin: 'skill-loadout', key: 'library' } as const, { groups: {}, presets: {} } as Library, { shape: 'library-2' })
-const prefs = atom({ plugin: 'skill-loadout', key: 'prefs' } as const, DEFAULT_PREFS, { shape: 'prefs-1' })
+const prefs = atom({ plugin: 'skill-loadout', key: 'prefs' } as const, DEFAULT_PREFS, { shape: 'prefs-2' })
+const extra = atom({ plugin: 'skill-loadout', key: 'extra' } as const, {} as Record<string, JsonValue>, { shape: 'extra-1' })
+const prepared = atom({ plugin: 'skill-loadout', key: 'prepared' } as const, null as Preset | null, { shape: 'prepared-1' })
 const dataFile = atom({ plugin: 'skill-loadout', key: 'dataFile' } as const, { path: '', status: 'unavailable' } as DataFile, {
   shape: 'datafile-1',
 })
@@ -114,17 +123,34 @@ const subagents = atom({ plugin: 'skill-loadout', key: 'subagents' } as const, {
 const pending = atom({ plugin: 'skill-loadout', key: 'pending' } as const, [] as PendingSpawn[], { shape: 'pending-1' })
 const briefed = atom({ plugin: 'skill-loadout', key: 'briefed' } as const, false, { shape: 'briefed-1' })
 const anchors = atom({ plugin: 'skill-loadout', key: 'anchors' } as const, [] as string[], { shape: 'anchors-1' })
+const detected = atom({ plugin: 'skill-loadout', key: 'detected' } as const, null as Lang | null, { shape: 'detected-1' })
 
 type Remembered = { preset: string | null; allow: string[] | null }
-type LibraryValue = { library: Library; prefs: Prefs }
+/** library.json as read: the groups and Agents, the settings, and the fields other tools keep there. */
+type LibraryValue = { library: Library; prefs: Prefs; extra: Record<string, unknown> }
+/** The client's prepared set as a card offers it, with next-session.json as it was read. */
+type Prepared = { next: NextSession; raw: Record<string, unknown> }
+/** One round of a card, read anew each time it shows: what it asks, its options, and the lines under them. */
+type CardRound = {
+  question: string
+  /** Put before the question, unless the card already leads with why it asks again. */
+  hint?: string
+  pool: readonly string[]
+  fixed: readonly string[]
+  agents: readonly string[]
+  notes: Record<string, string>
+  /** The main conversation's card, which marks the Agent last used in this folder. */
+  isMain: boolean
+}
 /** A loop's skills: every one when `allow` is null. */
 type Held = { allow: string[] | null; label: string }
 
 /**
  * Lines under the card's options beside what each Agent holds, by the card's
- * question: what 「和主会话一样」 keeps, which option the main agent suggested.
+ * question as asked: what 「和主会话一样」 keeps, which option the main agent
+ * suggested, what the client prepared; and whether it is the main card.
  */
-const cardNotes = new Map<string, Record<string, string>>()
+const cardNotes = new Map<string, Pick<CardRound, 'notes' | 'isMain'>>()
 
 /** The sets spawns settled, by the Agent call that asked for each, until that call's result goes back. */
 const spawnedSets = new Map<string, SubLoadout>()
@@ -142,11 +168,50 @@ const LOADOUT_TOOL = {
   },
 }
 
-function lockedText(label: string): string {
-  return (
-    `这个会话的装配已经锁定（${label}），不能再换。想换一组 skill，请新开一个会话；` +
-    '临时要用某个 skill，在消息里写出它的名字。'
-  )
+// The language the person is spoken to in.
+
+/** The language shown now: the one library.json sets, or for `auto` the one this session came to (English till then). */
+async function langNow($: EngineInterface): Promise<Lang> {
+  const { language } = await read($, prefs)
+  return language === 'auto' ? ((await read($, detected)) ?? 'en') : language
+}
+
+async function words($: EngineInterface): Promise<Words> {
+  return WORDS[await langNow($)]
+}
+
+/** Claude Code's own `language` setting, when it names Chinese or English. */
+async function settingLanguage($: EngineInterface): Promise<Lang | undefined> {
+  try {
+    return languageFromSetting(await $.settings.read({ key: 'language' }))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Works out what `auto` stands for: Claude Code's language setting; else the language of the
+ * person's message (`message`, their first); else what this session or the last one came to.
+ */
+async function detectLanguage($: EngineInterface, message?: string): Promise<void> {
+  const fromSetting = await settingLanguage($)
+  const fromMessage = message === undefined ? undefined : languageOf(message)
+  let stored: Lang | undefined
+  try {
+    stored = asLang(await $.store.get(LANGUAGE_KEY))
+  } catch {
+    stored = undefined
+  }
+  const found = fromSetting ?? fromMessage ?? (await read($, detected)) ?? stored
+  await update($, detected, () => found ?? null)
+  // The next session's panel, before its first message, speaks as this one does.
+  if (fromSetting === undefined && fromMessage !== undefined && fromMessage !== stored) {
+    try {
+      await $.store.set(LANGUAGE_KEY, fromMessage)
+    } catch {
+      // Remembering it is a nicety.
+    }
+  }
 }
 
 function shortError(error: unknown): string {
@@ -205,17 +270,19 @@ async function storedLibrary($: EngineInterface): Promise<LibraryValue> {
     // No store: the defaults below.
   }
   const defaults = await read($, config)
-  return { library: { groups: defaults.groups, presets: defaults.presets }, prefs: DEFAULT_PREFS }
+  return { library: { groups: defaults.groups, presets: defaults.presets }, prefs: DEFAULT_PREFS, extra: {} }
 }
 
 async function setLibrary($: EngineInterface, value: LibraryValue, file: DataFile): Promise<void> {
   await update($, library, () => value.library)
   await update($, prefs, () => value.prefs)
+  // What JSON.parse gave back is JSON through and through.
+  await update($, extra, () => value.extra as Record<string, JsonValue>)
   await update($, dataFile, () => file)
 }
 
 async function keepCopy($: EngineInterface, value: LibraryValue): Promise<void> {
-  const copy = JSON.parse(libraryFileText(value.library, value.prefs)) as unknown
+  const copy = JSON.parse(libraryFileText(value.library, value.prefs, value.extra)) as unknown
   if (JSON.stringify(await $.store.get(LIBRARY_KEY)) !== JSON.stringify(copy)) await $.store.set(LIBRARY_KEY, copy)
 }
 
@@ -246,7 +313,7 @@ async function loadLibrary($: EngineInterface): Promise<string> {
     return 'created'
   }
   let parsed: LibraryValue | undefined
-  let problem = '不是一个 JSON 对象'
+  let problem = 'not a JSON object'
   try {
     parsed = readLibraryFile(JSON.parse(text))
   } catch (error) {
@@ -264,12 +331,12 @@ async function loadLibrary($: EngineInterface): Promise<string> {
 
 /** Writes the library and settings to library.json, keeping the store's copy in step. */
 async function writeLibrary($: EngineInterface): Promise<void> {
-  const value = { library: await read($, library), prefs: await read($, prefs) }
+  const value = { library: await read($, library), prefs: await read($, prefs), extra: await read($, extra) }
   await keepCopy($, value)
   const file = await read($, dataFile)
   if (file.path === '') return
   try {
-    await $.fs.write(file.path, libraryFileText(value.library, value.prefs))
+    await $.fs.write(file.path, libraryFileText(value.library, value.prefs, value.extra))
     if (file.status !== 'ok') await update($, dataFile, (): DataFile => ({ path: file.path, status: 'ok' }))
   } catch (error) {
     await update($, dataFile, (): DataFile => ({ path: file.path, status: 'unwritable', error: shortError(error) }))
@@ -291,14 +358,16 @@ async function setAsk($: EngineInterface, isOn: boolean): Promise<void> {
   await freshLibrary($)
   await update($, prefs, old => ({ ...old, askOnNewSession: isOn }))
   await writeLibrary($)
-  $.ui.toast(isOn ? '新会话发第一条消息时，会先问你用哪套技能' : '新会话不再先问；要选的话，发第一条消息前打开面板选')
+  const t = await words($)
+  $.ui.toast(isOn ? t.toast.askOn : t.toast.askOff)
 }
 
 async function setSubagentPicker($: EngineInterface, picker: Prefs['subagentPicker']): Promise<void> {
   await freshLibrary($)
   await update($, prefs, old => ({ ...old, subagentPicker: picker }))
   await writeLibrary($)
-  $.ui.toast(picker === 'person' ? '以后每开一个子代理，都弹卡片问你用哪套技能' : '以后子代理的技能由主代理决定')
+  const t = await words($)
+  $.ui.toast(picker === 'person' ? t.toast.pickerPerson : t.toast.pickerAgent)
 }
 
 async function addToCatalog($: EngineInterface, found: readonly SkillEntry[]): Promise<void> {
@@ -345,7 +414,9 @@ async function writeCatalogFile($: EngineInterface): Promise<string> {
   }
   const at = await nowOr0($)
   const seen = mergeSeen(old, skills, at)
-  const file = { platform: 'claude-code', updatedAt: new Date(at).toISOString(), skills: seen }
+  // The skills every set keeps, so that another tool counts a set as the card does.
+  const { alwaysOn } = await read($, config)
+  const file = { platform: 'claude-code', updatedAt: new Date(at).toISOString(), alwaysOn, skills: seen }
   await $.fs.write(path, `${JSON.stringify(file, null, 2)}\n`)
   return `${seen.length} skills`
 }
@@ -355,7 +426,7 @@ async function allNames($: EngineInterface): Promise<string[]> {
 }
 
 async function groupsNow($: EngineInterface, isEmptyShown = false): Promise<Group[]> {
-  return groupSkills(await read($, catalog), (await read($, library)).groups, isEmptyShown)
+  return groupSkills(await read($, catalog), (await read($, library)).groups, isEmptyShown, await langNow($))
 }
 
 async function alwaysNow($: EngineInterface): Promise<string[]> {
@@ -368,13 +439,16 @@ async function selectionNow($: EngineInterface): Promise<Selection> {
   const skills = await read($, catalog)
   const lib = await read($, library)
 
+  const lang = await langNow($)
+
   return describeSelection(
     skills.map(skill => skill.name),
-    groupSkills(skills, lib.groups),
+    groupSkills(skills, lib.groups, false, lang),
     lib,
     await read($, allow),
     await read($, active),
     await alwaysNow($),
+    lang,
   )
 }
 
@@ -580,7 +654,7 @@ async function loadoutOf($: EngineInterface, agentId: string | undefined, depth 
 
 /** A subagent's skills from a name: an Agent's, or every skill for 不限制; undefined for no Agent. */
 async function namedLoadout($: EngineInterface, name: string, task: Pick<SubLoadout, 'description' | 'prompt' | 'by'>): Promise<SubLoadout | undefined> {
-  if (ALL_WORDS.includes(name)) return { ...task, allow: null, label: UNLIMITED }
+  if (ALL_WORDS.includes(name)) return { ...task, allow: null, label: (await words($)).unlimited }
   const preset = (await read($, library)).presets[name]
   if (preset === undefined) return undefined
 
@@ -591,11 +665,12 @@ async function namedLoadout($: EngineInterface, name: string, task: Pick<SubLoad
 async function briefing($: EngineInterface): Promise<string> {
   const lib = await read($, library)
   const groups = await groupsNow($, true)
+  const lang = await langNow($)
   const choices = Object.entries(lib.presets)
     .filter(([name]) => !RESERVED.includes(name))
-    .map(([name, preset]) => ({ name, summary: agentSummary(preset, groups) }))
+    .map(([name, preset]) => ({ name, summary: agentSummary(preset, groups, lang) }))
 
-  return choices.length === 0 ? '' : subagentBrief(choices, (await read($, prefs)).subagentPicker)
+  return choices.length === 0 ? '' : subagentBrief(choices, (await read($, prefs)).subagentPicker, lang)
 }
 
 // The session's loadout, while it can still be changed.
@@ -619,7 +694,7 @@ async function lastAgentHere($: EngineInterface): Promise<string | null> {
 async function choose($: EngineInterface, next: string[] | null, agent: string | null): Promise<void> {
   const held = await read($, lock)
   if (held !== null) {
-    $.ui.toast(lockedText(held.label))
+    $.ui.toast((await words($)).locked(held.label))
     return
   }
   const names = await allNames($)
@@ -627,6 +702,8 @@ async function choose($: EngineInterface, next: string[] | null, agent: string |
   const value = isAll ? null : next
   await update($, allow, () => value)
   await update($, active, () => (isAll ? null : agent))
+  // A set the client prepared is this session's only while nothing else was chosen after it.
+  await update($, prepared, () => null)
   await update($, chosen, () => true)
   await remember($, { preset: isAll ? null : agent, allow: value })
   $.ui.invalidate('prompt.attachment')
@@ -642,6 +719,80 @@ async function applyAgent($: EngineInterface, name: string): Promise<boolean> {
   await choose($, resolvePreset(preset, await groupsNow($), await allNames($)), name)
 
   return true
+}
+
+// The set the tray client prepared for the next session, which the card offers first.
+
+/** The client's prepared set while a card may offer it, with the file as read; null when there is none. */
+async function readPrepared($: EngineInterface): Promise<Prepared | null> {
+  const dir = await dataDir($)
+  if (dir === null) return null
+  const path = joinPath(dir, NEXT_FILE)
+  try {
+    if (!(await $.fs.exists(path))) return null
+    const raw: unknown = JSON.parse(await $.fs.read(path))
+    const next = readNextSession(raw, await nowOr0($))
+    return next === undefined ? null : { next, raw: raw as Record<string, unknown> }
+  } catch {
+    // Missing, half written or broken: nothing on offer.
+    return null
+  }
+}
+
+/**
+ * Whether the tray client is installed here: it writes client.json, naming its
+ * program, each time it starts; a program no longer there was uninstalled.
+ */
+async function hasClient($: EngineInterface): Promise<boolean> {
+  const dir = await dataDir($)
+  if (dir === null) return false
+  try {
+    const path = joinPath(dir, CLIENT_FILE)
+    if (!(await $.fs.exists(path))) return false
+    const info = JSON.parse(await $.fs.read(path)) as { path?: unknown }
+    return typeof info.path === 'string' && info.path !== '' && (await $.fs.exists(info.path))
+  } catch {
+    return false
+  }
+}
+
+/** Makes the client's prepared set this session's, and marks it taken so that no other card offers it. */
+async function applyPrepared($: EngineInterface, found: Prepared): Promise<void> {
+  if ((await read($, lock)) !== null) return
+  const lib = await read($, library)
+  const basedOn = found.next.basedOn !== null && found.next.basedOn in lib.presets ? found.next.basedOn : null
+  await choose($, resolvePreset(found.next.preset, await groupsNow($), await allNames($)), basedOn)
+  await update($, prepared, () => found.next.preset)
+  const dir = await dataDir($)
+  if (dir === null) return
+  try {
+    await $.fs.write(joinPath(dir, NEXT_FILE), usedNextSession(found.raw, await sessionIdNow($), await nowOr0($)))
+  } catch {
+    // The set is this session's either way; another card may offer it again until the file says otherwise.
+  }
+}
+
+/** The line under the card's option for the prepared set: the Agent it started from and how it differs, its size, its age. */
+async function preparedNote($: EngineInterface, next: NextSession): Promise<string> {
+  const skills = await read($, catalog)
+  const names = skills.map(skill => skill.name)
+  const lib = await read($, library)
+  const lang = await langNow($)
+  const t = WORDS[lang]
+  const groups = groupSkills(skills, lib.groups, true, lang)
+  const set = resolvePreset(next.preset, groups, names)
+  const base = next.basedOn === null ? undefined : lib.presets[next.basedOn]
+  const parts: string[] = []
+  if (next.basedOn !== null && base !== undefined && names.length > 0) {
+    const { added, removed } = setChanges(set, resolvePreset(base, groups, names))
+    parts.push(t.card.basedOn(next.basedOn, added, removed))
+  } else {
+    parts.push(agentSummary(next.preset, groups, lang))
+  }
+  if (names.length > 0) parts.push(t.card.skills(new Set([...set, ...(await alwaysNow($))]).size))
+  parts.push(t.card.preparedAgo(Math.round(((await nowOr0($)) - next.createdAt) / 60_000)))
+
+  return parts.join(' · ')
 }
 
 /** The selection as a list, with null ("all") spelled out. */
@@ -666,15 +817,16 @@ function cleanName(raw: string): string {
 }
 
 /** Why a name cannot be an Agent's, or undefined when it can. */
-function nameProblem(name: string): string | undefined {
-  if (name === '') return '先给 Agent 起个名字'
-  return RESERVED.includes(name) ? `「${name}」是保留的名字，换一个` : undefined
+function nameProblem(t: Words, name: string): string | undefined {
+  if (name === '') return t.toast.nameEmpty
+  return RESERVED.includes(name) ? t.toast.nameReserved(name) : undefined
 }
 
 /** Saves what the session has on as an Agent: a new one, or over the named one. */
 async function saveAgentFromSession($: EngineInterface, raw: string): Promise<void> {
+  const t = await words($)
   const name = cleanName(raw)
-  const problem = nameProblem(name)
+  const problem = nameProblem(t, name)
   if (problem !== undefined) {
     $.ui.toast(problem)
     return
@@ -687,7 +839,7 @@ async function saveAgentFromSession($: EngineInterface, raw: string): Promise<vo
     await update($, active, () => name)
     await remember($, { preset: name, allow: await read($, allow) })
   }
-  $.ui.toast(isNew ? `已存为新 Agent「${name}」` : `已更新 Agent「${name}」`)
+  $.ui.toast(isNew ? t.toast.savedAsNew(name) : t.toast.updated(name))
 }
 
 // Screens and the edits made on them.
@@ -741,15 +893,16 @@ async function draftSetGroup($: EngineInterface, group: Group, isOn: boolean): P
 async function saveDraft($: EngineInterface): Promise<void> {
   const edited = await read($, draft)
   if (edited === null) return
+  const t = await words($)
   const name = cleanName(edited.name)
-  const problem = nameProblem(name)
+  const problem = nameProblem(t, name)
   if (problem !== undefined) {
     $.ui.toast(problem)
     return
   }
   const lib = await freshLibrary($)
   if (name !== edited.original && name in lib.presets) {
-    $.ui.toast(`已经有叫「${name}」的 Agent 了`)
+    $.ui.toast(t.toast.nameTaken(name))
     return
   }
   const preset = toPreset(edited.selected, await groupsNow($))
@@ -759,7 +912,7 @@ async function saveDraft($: EngineInterface): Promise<void> {
   const isNew = edited.original === null || !(edited.original in lib.presets)
   await saveLibrary($, { ...lib, presets: Object.fromEntries(isNew ? [...entries, [name, preset]] : entries) })
   if (!isNew && (await read($, active)) === edited.original) await update($, active, () => name)
-  $.ui.toast(isNew ? `已新建 Agent「${name}」` : `已保存 Agent「${name}」`)
+  $.ui.toast(isNew ? t.toast.created(name) : t.toast.saved(name))
   await go($, 'manage')
 }
 
@@ -775,7 +928,7 @@ async function createGroup($: EngineInterface, raw: string): Promise<void> {
   if (label === '') return
   const lib = await freshLibrary($)
   if (label in lib.groups) {
-    $.ui.toast(`已经有叫「${label}」的技能组了`)
+    $.ui.toast((await words($)).toast.groupTaken(label))
     return
   }
   await saveLibrary($, { ...lib, groups: { ...lib.groups, [label]: [] } })
@@ -800,21 +953,22 @@ async function renameGroupTo($: EngineInterface, from: string, raw: string): Pro
   const to = cleanName(raw)
   const lib = await freshLibrary($)
   if (to === '' || to === from) return
+  const t = await words($)
   if (to in lib.groups) {
-    $.ui.toast(`已经有叫「${to}」的技能组了`)
+    $.ui.toast(t.toast.groupTaken(to))
     return
   }
   await saveLibrary($, renameGroup(lib, from, to))
   await update($, expanded, old => old.map(id => id.replace(`:g:${from}`, `:g:${to}`)))
   await update($, editGroup, () => to)
-  $.ui.toast(`已改名为「${to}」`)
+  $.ui.toast(t.toast.renamed(to))
 }
 
 async function removeGroup($: EngineInterface, label: string): Promise<void> {
   const lib = await freshLibrary($)
   const group = (await groupsNow($, true)).find(one => one.id === `g:${label}`)
   await saveLibrary($, deleteGroup(lib, label, group?.names ?? []))
-  $.ui.toast(`已删除技能组「${label}」，里面的 skill 回到「未归组」`)
+  $.ui.toast((await words($)).toast.groupDeleted(label))
   await go($, 'manage')
 }
 
@@ -822,7 +976,7 @@ async function resetLibrary($: EngineInterface): Promise<void> {
   const defaults = await read($, config)
   await freshLibrary($)
   await saveLibrary($, { groups: defaults.groups, presets: defaults.presets })
-  $.ui.toast('Agent 和技能组已恢复成默认设置')
+  $.ui.toast((await words($)).toast.reset)
 }
 
 // The card: the person's first message waits while they pick the conversation's Agent.
@@ -839,7 +993,9 @@ async function describer(
   const skills = await read($, catalog)
   const lib = await read($, library)
   const names = skills.map(skill => skill.name)
-  const groups = groupSkills(skills, lib.groups, true)
+  const lang = await langNow($)
+  const t = WORDS[lang]
+  const groups = groupSkills(skills, lib.groups, true, lang)
   const always = await alwaysNow($)
   const last = isFirstMessage ? await lastAgentHere($) : null
   const agentCount = offeredAgents(lib).length
@@ -847,15 +1003,15 @@ async function describer(
 
   return label => {
     const note = notes[label]
-    if (label === UNLIMITED) return line(note, names.length > 0 ? `装全部 ${names.length} 个 skill` : '装全部 skill')
-    if (label === MORE) return `换下一批，一共 ${agentCount} 个 Agent`
+    if (ALL_WORDS.includes(label)) return line(note, names.length > 0 ? t.card.allSkills(names.length) : t.card.allSkillsUnknown)
+    if (MORE_LABELS.includes(label)) return t.card.nextPage(agentCount)
     const preset = lib.presets[label]
     if (preset === undefined) return note ?? ''
     const count = new Set([...resolvePreset(preset, groups, names), ...always]).size
     return line(
-      label === last ? '上次在这个文件夹用的' : note,
-      agentSummary(preset, groups),
-      names.length > 0 ? `${count} 个 skill` : undefined,
+      label === last ? t.card.lastHere : note,
+      agentSummary(preset, groups, lang),
+      names.length > 0 ? t.card.skills(count) : undefined,
     )
   }
 }
@@ -865,39 +1021,41 @@ type CardResult = { picked: string | null; answers: string[]; outcome: string }
 
 /**
  * Shows the card until an option is picked: 「更多 Agent…」 pages through the
- * pool, and an answer that names none asks again, a few times at most.
+ * pool, and an answer that names none asks again, a few times at most. Each
+ * round reads what it offers anew (`round`), so that an Agent or a set made in
+ * the tray client while the card waits shows on the next one.
  */
-async function askCard(
-  $: EngineInterface,
-  question: string,
-  pool: readonly string[],
-  fixed: readonly string[],
-  agents: readonly string[],
-): Promise<CardResult> {
+async function askCard($: EngineInterface, round: () => Promise<CardRound>): Promise<CardResult> {
   const answers: string[] = []
   let start = 0
   let misses = 0
-  let asked = question
-  for (let round = 0; round < MAX_ROUNDS && misses < MAX_MISSES; round += 1) {
-    const page = askPage(pool, start, fixed)
+  let lead = ''
+  for (let turn = 0; turn < MAX_ROUNDS && misses < MAX_MISSES; turn += 1) {
+    const now = await round()
+    const t = await words($)
+    const page = askPage(now.pool, start, now.fixed, t.more)
+    const asked = (lead === '' ? (now.hint ?? '') : lead) + now.question
+    cardNotes.set(asked, { notes: now.notes, isMain: now.isMain })
     let answer: string
     try {
-      answer = await $.ui.ask(asked, { header: TITLE, options: page.options })
+      answer = await $.ui.ask(asked, { header: t.cardHeader, options: page.options })
     } catch {
       // Dismissed, or nobody to ask (a -p run).
       return { picked: null, answers, outcome: 'dismissed' }
+    } finally {
+      cardNotes.delete(asked)
     }
     answers.push(answer.slice(0, 300))
-    const picked = pickOption(answer, page.options, agents)
-    if (picked === MORE) {
+    const picked = pickOption(answer, page.options, now.agents)
+    if (picked !== null && MORE_LABELS.includes(picked)) {
       start = page.next
-      asked = question
+      lead = ''
       continue
     }
     if (picked !== null) return { picked, answers, outcome: `picked ${picked}` }
     if (answer.trim() === '') return { picked: null, answers, outcome: 'empty answer' }
     misses += 1
-    asked = `「${cleanName(answer)}」不是现成的 Agent，卡片上只能选一个。${question}`
+    lead = isClientWord(answer) ? t.card.noClientSet : t.card.notAnAgent(cleanName(answer))
   }
 
   return { picked: null, answers, outcome: 'nothing picked' }
@@ -912,18 +1070,42 @@ function offeredAgents(lib: Library): string[] {
 async function askLoadout($: EngineInterface): Promise<CardResult> {
   const lib = await freshLibrary($)
   if (!(await read($, prefs)).askOnNewSession) return { picked: null, answers: [], outcome: 'off' }
-  const agents = offeredAgents(lib)
-  if (agents.length === 0) return { picked: null, answers: [], outcome: 'no agents' }
+  if (offeredAgents(lib).length === 0 && (await readPrepared($)) === null) {
+    return { picked: null, answers: [], outcome: 'no agents' }
+  }
   await update($, asking, () => true)
   try {
-    const card = await askCard($, ASK_QUESTION, agentOrder(agents, await lastAgentHere($)), [UNLIMITED], agents)
-    if (card.picked !== null && (await applyAgent($, card.picked))) {
-      const selection = await selectionNow($)
-      const count = (await allNames($)).length > 0 ? `，共 ${selection.loaded.size} 个 skill` : ''
-      $.ui.toast(`这个会话用「${selection.label}」${count}`)
+    const last = await lastAgentHere($)
+    const card = await askCard($, async () => {
+      const agents = offeredAgents(await freshLibrary($))
+      const t = await words($)
+      const ordered = agentOrder(agents, last)
+      const found = await readPrepared($)
+      if (found === null) {
+        const hint = (await hasClient($)) ? t.card.clientHint : ''
+        return { question: t.ask, hint, pool: ordered, fixed: [t.unlimited], agents, notes: {}, isMain: true }
+      }
+      const notes = { [t.clientPick]: await preparedNote($, found.next) }
+      return { question: t.ask, pool: [t.clientPick, ...ordered], fixed: [t.unlimited], agents, notes, isMain: true }
+    })
+    let isSet = false
+    if (card.picked !== null && CLIENT_LABELS.includes(card.picked)) {
+      // The set as the client holds it now: it may have changed while the card waited.
+      const found = await readPrepared($)
+      if (found !== null) {
+        await applyPrepared($, found)
+        isSet = true
+      }
+    } else if (card.picked !== null) {
+      isSet = await applyAgent($, card.picked)
+    }
+    const t = await words($)
+    const selection = await selectionNow($)
+    if (isSet) {
+      $.ui.toast(t.card.chose(selection.label, (await allNames($)).length > 0 ? selection.loaded.size : null))
     } else {
       // The conversation starts with what it has.
-      $.ui.toast(`没有选技能装配，这个会话按「${(await selectionNow($)).label}」开始`)
+      $.ui.toast(t.card.noneChosen(selection.label))
     }
     return card
   } finally {
@@ -941,22 +1123,22 @@ async function askSubagent(
   isUnderMain: boolean,
 ): Promise<SubLoadout> {
   const agents = offeredAgents(await freshLibrary($))
-  const same = isUnderMain ? SAME_AS_MAIN : SAME_AS_PARENT
-  const first = suggested !== null && (agents.includes(suggested) || suggested === UNLIMITED) ? suggested : null
-  const pool = [...(first === null ? [] : [first]), ...[...agents, UNLIMITED].filter(name => name !== first)]
-  const question = `子代理「${task.description === '' ? '新任务' : task.description}」用哪套技能？`
-  cardNotes.set(question, {
-    [same]: `沿用「${parent.label}」`,
-    ...(first === null ? {} : { [first]: '主代理建议' }),
-  })
-  try {
-    const card = await askCard($, question, pool, [same], agents)
-    const kept: SubLoadout = { ...task, allow: parent.allow, label: parent.label, by: 'inherit' }
-    if (card.picked === null || card.picked === same) return kept
-    return (await namedLoadout($, card.picked, { ...task, by: 'person' })) ?? kept
-  } finally {
-    cardNotes.delete(question)
+  const t = await words($)
+  const same = isUnderMain ? t.sameAsMain : t.sameAsParent
+  // The suggestion as the card names it: an Agent, or 不限制 in the card's language.
+  const named = suggested !== null && ALL_WORDS.includes(suggested) ? t.unlimited : suggested
+  const first = named !== null && (agents.includes(named) || named === t.unlimited) ? named : null
+  const pool = [...(first === null ? [] : [first]), ...[...agents, t.unlimited].filter(name => name !== first)]
+  const question = t.card.subQuestion(task.description === '' ? t.card.newTask : task.description)
+  const notes = {
+    [same]: t.card.keeps(parent.label),
+    ...(first === null ? {} : { [first]: t.card.suggested }),
   }
+  const card = await askCard($, async () => ({ question, pool, fixed: [same], agents, notes, isMain: false }))
+  const kept: SubLoadout = { ...task, allow: parent.allow, label: parent.label, by: 'inherit' }
+  if (card.picked === null || card.picked === same) return kept
+
+  return (await namedLoadout($, card.picked, { ...task, by: 'person' })) ?? kept
 }
 
 // The panel: opened on its own when a new session starts, unless the card asks instead;
@@ -964,7 +1146,7 @@ async function askSubagent(
 
 async function openPane($: EngineInterface): Promise<{ isPlaced: boolean; reason?: string }> {
   await freshLibrary($)
-  const opened = await $.ui.open({ id: PANE, title: TITLE })
+  const opened = await $.ui.open({ id: PANE, title: (await words($)).title })
   if (opened.isPlaced) await update($, pane, () => 'open')
 
   return opened
@@ -1018,20 +1200,22 @@ export const register: Register = on => {
       }
     }
     await step('at', () => $.clock.now())
-    await step('command', () =>
-      $.command.register({
-        name: 'loadout',
-        description: `打开技能装配面板；发第一条消息前可用 /loadout <Agent 名> 直接切换（/loadout ${UNLIMITED} 装全部 skill）`,
-        argumentHint: '[Agent 名]',
-      }),
-    )
-    await step('tool', () => $.tool.register(LOADOUT_TOOL))
     await step('config', async () => {
       const loaded = await loadConfig($)
       await update($, config, () => loaded)
       return loaded.alwaysOn.length
     })
     await step('file', () => loadLibrary($))
+    // The language the session speaks till its first message says more: the command's description is in it.
+    await step('language', async () => {
+      await detectLanguage($)
+      return langNow($)
+    })
+    await step('command', async () => {
+      const t = await words($)
+      return $.command.register({ name: 'loadout', description: t.command.description, argumentHint: t.command.hint })
+    })
+    await step('tool', () => $.tool.register(LOADOUT_TOOL))
     await update($, cwd, () => e.cwd)
     // A card left open by an earlier copy of this code is gone with it.
     await update($, asking, () => false)
@@ -1094,6 +1278,7 @@ export const register: Register = on => {
       if (e.reason === 'resume') {
         await update($, allow, () => null)
         await update($, active, () => null)
+        await update($, prepared, () => null)
       }
     }
     return next(e)
@@ -1103,15 +1288,18 @@ export const register: Register = on => {
     const input = e as { action?: string }
     if (input.action === 'open') {
       const opened = await openPane($)
+      // The model reads this, and tells the person in their own words.
       const text = opened.isPlaced
-        ? '技能装配面板已打开。'
-        : `面板没能打开（${opened.reason ?? '界面没有放置它'}）。可以点输入框上方的「打开面板」，或输入 /loadout。`
+        ? 'The Skill Loadout panel is open.'
+        : `The panel could not be opened (${opened.reason ?? 'the app did not place it'}). The person can press ` +
+          '"Open panel" on the Skill Loadout bar above the prompt, or type /loadout.'
       return { result: text, text }
     }
     const lib = await freshLibrary($)
     const skills = await read($, catalog)
     const names = skills.map(skill => skill.name)
-    const groups = groupSkills(skills, lib.groups, true)
+    const lang = await langNow($)
+    const groups = groupSkills(skills, lib.groups, true, lang)
     const always = await alwaysNow($)
     const held = await read($, lock)
     const selection = await selectionNow($)
@@ -1122,6 +1310,7 @@ export const register: Register = on => {
       total: names.length,
       askOnNewSession: (await read($, prefs)).askOnNewSession,
       subagentPicker: (await read($, prefs)).subagentPicker,
+      language: { setting: (await read($, prefs)).language, shown: lang },
       subagents: Object.fromEntries(
         Object.entries(await read($, subagents)).map(([id, one]) => [
           id,
@@ -1152,25 +1341,34 @@ export const register: Register = on => {
 
   on('command.run', { command: 'loadout' }, async ($, e) => {
     const typed = e.args.trim()
+    const t = await words($)
     if (typed === '') {
       await openPane($)
-      return { text: '技能装配面板已打开。' }
+      return { text: t.command.opened }
     }
     const held = await read($, lock)
-    if (held !== null) return { text: lockedText(held.label) }
+    if (held !== null) return { text: t.locked(held.label) }
     const agents = offeredAgents(await freshLibrary($))
+    const lang = await langNow($)
     // The name as typed; else one the text starts with, as when more words follow it.
     const first = typed.split('\n')[0]?.trim() ?? ''
+    // The set the tray client prepared, unless an Agent goes by that very word.
+    if (isClientWord(first) && !agents.some(name => name.toLowerCase() === first.toLowerCase())) {
+      const found = await readPrepared($)
+      if (found === null) return { text: t.command.noClientSet }
+      await applyPrepared($, found)
+      return { text: t.command.usingClient((await selectionNow($)).label) }
+    }
     const name =
-      answerAgent(typed, agents) ??
-      answerAgent(first, agents) ??
-      [...agents, UNLIMITED].filter(one => first.toLowerCase().startsWith(one.toLowerCase())).sort((a, b) => b.length - a.length)[0] ??
+      answerAgent(typed, agents, lang) ??
+      answerAgent(first, agents, lang) ??
+      [...agents, ...ALL_WORDS].filter(one => first.toLowerCase().startsWith(one.toLowerCase())).sort((a, b) => b.length - a.length)[0] ??
       null
     if (name !== null && (await applyAgent($, name))) {
-      return { text: `这个会话改用「${name}」，发出第一条消息后锁定。` }
+      return { text: t.command.using(ALL_WORDS.includes(name) ? t.unlimited : name) }
     }
 
-    return { text: `没有叫「${first}」的 Agent。可用的有：${[UNLIMITED, ...agents].join('、')}` }
+    return { text: t.command.noAgent(first, [t.unlimited, ...agents]) }
   })
 
   // The person's first message in a new conversation waits, before the model reads anything, while they
@@ -1187,6 +1385,8 @@ export const register: Register = on => {
       else if (e.command?.name === 'loadout') outcome = 'the /loadout command'
       else if (await hasHistory($)) outcome = 'has history'
       else {
+        // The card speaks the language the person's first message is in, unless a setting says otherwise.
+        await detectLanguage($, e.text)
         const card = await askLoadout($)
         outcome = card.outcome
         answers = card.answers
@@ -1211,7 +1411,7 @@ export const register: Register = on => {
       const agents = offeredAgents(await freshLibrary($))
       const named = markerName(e.prompt)
       // The main agent's line; else, for a spawn of the main conversation, the set the person's latest message names.
-      const fromLine = named === null ? null : pickOption(named, [...agents, UNLIMITED], agents)
+      const fromLine = named === null ? null : pickOption(named, [...agents, (await words($)).unlimited], agents)
       const fromPerson =
         fromLine === null && e.parentAgentId === undefined ? setNamedIn(await read($, lastPrompt), agents) : null
       const suggested = fromLine ?? fromPerson
@@ -1255,9 +1455,10 @@ export const register: Register = on => {
   // The cards' options say what each Agent holds.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     const [first, ...rest] = e.questions
-    if (first === undefined || first.header !== TITLE) return next(e)
-    const notes = [...cardNotes.entries()].find(([question]) => first.question.endsWith(question))?.[1] ?? {}
-    const describe = await describer($, notes, first.question.endsWith(ASK_QUESTION))
+    if (first === undefined || !CARD_HEADERS.includes(first.header)) return next(e)
+    const card = [...cardNotes.entries()].find(([question]) => first.question.endsWith(question))?.[1]
+    const isMain = card?.isMain ?? ASK_QUESTIONS.some(question => first.question.endsWith(question))
+    const describe = await describer($, card?.notes ?? {}, isMain)
     const options = first.options.map(option => {
       const description = describe(option.label)
       return description === '' ? option : { ...option, description }
@@ -1276,28 +1477,23 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || (await read($, pane)) === 'open') return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
+    const t = await words($)
     const total = (await read($, catalog)).length
     const held = await read($, lock)
     const selection = await selectionNow($)
     const isAsked = (await read($, prefs)).askOnNewSession && !(await read($, chosen))
     const state =
-      held !== null
-        ? '已锁定'
-        : (await read($, asking))
-          ? '正在问你用哪套'
-          : isAsked
-            ? '发第一条消息时会问你'
-            : '发第一条消息前可改'
+      held !== null ? t.band.locked : (await read($, asking)) ? t.band.asking : isAsked ? t.band.willAsk : t.band.canChange
 
     return (
       <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
         <Box flexDirection="row" columnGap={1}>
-          <Text dimColor>技能装配</Text>
+          <Text dimColor>{t.title}</Text>
           <Text weight="semibold">{held?.label ?? selection.label}</Text>
           <Text dimColor tabular>{`${selection.loaded.size}/${total}`}</Text>
           <Text dimColor>{state}</Text>
         </Box>
-        <Button key="band:open" label="打开面板" onPress={() => openPane($)} />
+        <Button key="band:open" label={t.band.open} onPress={() => openPane($)} />
       </Box>
     )
   }).catch(($, e, next) => next(e))
@@ -1308,8 +1504,17 @@ export const register: Register = on => {
     if (result.text === null) return result
     const known = await allNames($)
     const found = listingNames(result.text, known).filter(name => !known.includes(name))
-    await addToCatalog($, found.map(name => ({ name })))
-    if (found.length > 0) {
+    const names = [...known, ...found]
+    // What each skill is for, for other tools to show: kept when it changes.
+    const before = new Map((await read($, catalog)).map(skill => [skill.name, skill.description]))
+    const described = Object.entries(listingDescriptions(result.text, names)).filter(
+      ([name, description]) => before.get(name) !== description,
+    )
+    await addToCatalog($, [
+      ...found.map(name => ({ name })),
+      ...described.map(([name, description]) => ({ name, description })),
+    ])
+    if (found.length > 0 || described.length > 0) {
       try {
         await writeCatalogFile($)
       } catch {
@@ -1317,21 +1522,18 @@ export const register: Register = on => {
       }
     }
     const { alwaysOn } = await read($, config)
-    const names = [...known, ...found]
     // A subagent's listing keeps the skills its spawn settled.
     if (e.agentId !== undefined) return { text: limitListing(result.text, await loadoutOf($, e.agentId), names, alwaysOn, true) }
     let list = await read($, allow)
-    // An Agent chosen before the skills were known is worked out again now that they are.
+    // A set chosen before the skills were known (the client's, or an Agent) is worked out again now that they are.
     const agent = await read($, active)
-    if (known.length === 0 && found.length > 0 && list !== null && agent !== null) {
-      const preset = (await read($, library)).presets[agent]
-      if (preset !== undefined) {
-        const resolved = resolvePreset(preset, await groupsNow($), await allNames($))
-        list = resolved
-        await update($, allow, () => resolved)
-        const held = await read($, lock)
-        if (held !== null) await saveLock($, held)
-      }
+    const preset = (await read($, prepared)) ?? (agent === null ? undefined : (await read($, library)).presets[agent])
+    if (known.length === 0 && found.length > 0 && list !== null && preset !== undefined) {
+      const resolved = resolvePreset(preset, await groupsNow($), await allNames($))
+      list = resolved
+      await update($, allow, () => resolved)
+      const held = await read($, lock)
+      if (held !== null) await saveLock($, held)
     }
     let text = limitListing(result.text, { allow: list, label: (await mainLoadout($)).label }, names, alwaysOn, false)
     // The conversation's first listing also tells the model how subagents get their skills.
@@ -1352,18 +1554,19 @@ export const register: Register = on => {
     const asked =
       e.agentId === undefined ? await read($, lastPrompt) : ((await read($, subagents))[e.agentId]?.prompt ?? '')
     if (asked.includes(e.skill) || matchesAny(alwaysOn, e.skill)) return next(e)
+    // The model reads these, whatever language the person uses.
     if (e.agentId !== undefined) {
       return {
         deny:
-          `「${e.skill}」不在这个子代理的技能装配（${held.label}）里。只用装配给你的 skill；` +
-          '确实需要它的话，在交回的结果里说明需要哪个 skill。',
+          `"${e.skill}" is not in this subagent's skill set ("${held.label}"). Use only the skills you were given; ` +
+          'if you really need this one, say in your result which skill you need.',
       }
     }
 
     return {
       deny:
-        `「${e.skill}」没有装配到这个会话，而这个会话的装配已经锁定。不要换个名字再试；` +
-        '如果确实需要它，告诉用户在消息里写出这个 skill 的名字就能临时使用。',
+        `"${e.skill}" is not loaded in this session, and the session's skill set is locked. Don't retry under another name; ` +
+        'if it is really needed, tell the user that writing the skill\'s name in a message makes it available for that request.',
     }
   }).catch(($, e, next) => next(e))
 
@@ -1383,8 +1586,11 @@ export const register: Register = on => {
     const subs = Object.values(await read($, subagents))
     const names = skills.map(skill => skill.name)
     const always = new Set(await alwaysNow($))
-    const groups = groupSkills(skills, lib.groups)
-    const groupsAll = groupSkills(skills, lib.groups, true)
+    const lang = await langNow($)
+    const t = WORDS[lang]
+    const p = t.pane
+    const groups = groupSkills(skills, lib.groups, false, lang)
+    const groupsAll = groupSkills(skills, lib.groups, true, lang)
     const agentNames = Object.keys(lib.presets)
     const toggleOpen = (id: string) =>
       update($, expanded, old => (old.includes(id) ? old.filter(one => one !== id) : [...old, id]))
@@ -1453,7 +1659,7 @@ export const register: Register = on => {
                 <Box flexDirection="column" paddingLeft={3}>
                   {group.names.map(name =>
                     always.has(name) ? (
-                      <Text dimColor>{`☑  ${name}  常驻`}</Text>
+                      <Text dimColor>{`☑  ${name}  ${p.alwaysOn}`}</Text>
                     ) : (
                       <Button
                         key={`${prefix}:sk:${group.id}:${name}`}
@@ -1497,7 +1703,7 @@ export const register: Register = on => {
                 <Box flexDirection="column" paddingLeft={3}>
                   {group.names.map(name => (
                     <Text dimColor={!selected.has(name)}>
-                      {`${selected.has(name) ? '☑' : '☐'}  ${name}${always.has(name) ? '  常驻' : ''}`}
+                      {`${selected.has(name) ? '☑' : '☐'}  ${name}${always.has(name) ? `  ${p.alwaysOn}` : ''}`}
                     </Text>
                   ))}
                 </Box>
@@ -1512,8 +1718,8 @@ export const register: Register = on => {
       if (edited === null) {
         return (
           <Box flexDirection="column" rowGap="md">
-            {screenHeader('agent-cancel', '← 返回', 'manage', 'Agent')}
-            <Text dimColor>没有正在编辑的 Agent</Text>
+            {screenHeader('agent-cancel', p.back, 'manage', p.agentHeading)}
+            <Text dimColor>{p.noDraft}</Text>
           </Box>
         )
       }
@@ -1521,24 +1727,24 @@ export const register: Register = on => {
 
       return (
         <Box flexDirection="column" rowGap="lg">
-          {screenHeader('agent-cancel', '← 取消', 'manage', edited.original === null ? '新建 Agent' : '编辑 Agent')}
+          {screenHeader('agent-cancel', p.cancel, 'manage', edited.original === null ? p.newAgent : p.editAgent)}
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('名字')}
+            {sectionTitle(p.name)}
             <Input
               key={`agent-name:${edited.original ?? ''}`}
               value={edited.name}
-              placeholder="视频制作"
+              placeholder={p.namePlaceholder}
               onInput={value => setDraftName($, value)}
               onSubmit={() => saveDraft($)}
             />
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('装哪些技能组', '勾整组，或者点组名展开、勾单个 skill')}
+            {sectionTitle(p.whichGroups, p.whichGroupsHint)}
             {checklist('a', shown, (group, isOn) => draftSetGroup($, group, isOn), name => draftToggleSkill($, name))}
           </Box>
           <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
-            <Text dimColor>{`已选 ${names.filter(name => shown.has(name)).length} 个（含 ${always.size} 个常驻）`}</Text>
-            <Button key="agent-save" variant="primary" label="保存" onPress={() => saveDraft($)} />
+            <Text dimColor>{p.picked(names.filter(name => shown.has(name)).length, always.size)}</Text>
+            <Button key="agent-save" variant="primary" label={p.save} onPress={() => saveDraft($)} />
           </Box>
         </Box>
       )
@@ -1551,8 +1757,8 @@ export const register: Register = on => {
       if (label === null || group === undefined) {
         return (
           <Box flexDirection="column" rowGap="md">
-            {screenHeader('group-done', '← 返回', 'manage', '技能组')}
-            <Text dimColor>这个技能组已经不在了</Text>
+            {screenHeader('group-done', p.back, 'manage', p.groupsHeading)}
+            <Text dimColor>{p.groupGone}</Text>
           </Box>
         )
       }
@@ -1567,17 +1773,14 @@ export const register: Register = on => {
 
       return (
         <Box flexDirection="column" rowGap="lg">
-          {screenHeader('group-done', '← 完成', 'manage', '编辑技能组')}
+          {screenHeader('group-done', p.done, 'manage', p.editGroup)}
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('名字', '改完按回车')}
+            {sectionTitle(p.name, p.nameHint)}
             <Input key={`group-name:${label}`} value={label} onSubmit={value => renameGroupTo($, label, value)} />
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle(
-              `成员 ${group.names.length} 个`,
-              '勾选零碎装的 skill 放进这个组。一个 skill 只能在一个组里，勾选会把它从原来的组移过来',
-            )}
-            {loose.length === 0 && <Text dimColor>没有零碎装的 skill</Text>}
+            {sectionTitle(p.members(group.names.length), p.membersHint)}
+            {loose.length === 0 && <Text dimColor>{p.noLoose}</Text>}
             {ordered.map(name => {
               const isMember = group.names.includes(name)
               const home = homeOf.get(name)
@@ -1586,7 +1789,7 @@ export const register: Register = on => {
                 <Button key={`member:${name}`} plain dimColor={!isMember} onPress={() => toggleGroupMember($, label, name)}>
                   {isMember ? '☑  ' : '☐  '}
                   {name}
-                  <Text dimColor>{!isMember && home !== undefined ? `  在 ${home}` : ''}</Text>
+                  <Text dimColor>{!isMember && home !== undefined ? p.inGroup(home) : ''}</Text>
                 </Button>
               )
             })}
@@ -1595,7 +1798,7 @@ export const register: Register = on => {
             key="group-delete"
             plain
             dimColor={!isPending}
-            label={isPending ? '确认删除这个技能组？再点一次' : '删除这个技能组'}
+            label={isPending ? p.deleteGroupConfirm : p.deleteGroup}
             onPress={() => confirmThen($, deleteKey, () => removeGroup($, label))}
           />
         </Box>
@@ -1607,28 +1810,29 @@ export const register: Register = on => {
       const custom = groupsAll.filter(group => group.kind === 'custom')
       const ungrouped = groupsAll.find(group => group.kind === 'ungrouped')
       const fixed = groupsAll.filter(group => group.kind === 'fixed')
+      const error = file.error ?? p.unknownError
       const fileProblem =
         file.status === 'invalid'
-          ? `文件格式有误（${file.error ?? '读不懂'}）。现在用的是上次读到的设置；在这里改动会用这些设置覆盖这个文件`
+          ? p.fileInvalid(error)
           : file.status === 'unreadable'
-            ? `读不了这个文件（${file.error ?? '原因不明'}），现在用的是上次读到的设置`
+            ? p.fileUnreadable(error)
             : file.status === 'unwritable'
-              ? `写不进这个文件（${file.error ?? '原因不明'}），改动只存在插件自己的存储里`
+              ? p.fileUnwritable(error)
               : undefined
 
       return (
         <Box flexDirection="column" rowGap="lg">
           <Box flexDirection="column" rowGap="xs">
-            {screenHeader('back', '← 返回', 'main', '管理')}
+            {screenHeader('back', p.back, 'main', p.manage)}
             {held !== null && (
               <Text size="caption" dimColor>
-                这个会话已经锁定，这里的修改从下一个新会话起生效
+                {p.lockedNote}
               </Text>
             )}
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('Agent', '由技能组和单个 skill 拼成；新会话发第一条消息时选一个')}
-            {agentNames.length === 0 && <Text dimColor>还没有 Agent</Text>}
+            {sectionTitle(p.agents, p.agentsHint)}
+            {agentNames.length === 0 && <Text dimColor>{p.noAgents}</Text>}
             {agentNames.map(name => {
               const preset = lib.presets[name] ?? { groups: [], skills: [] }
               const isPending = pending === `agent:${name}`
@@ -1638,26 +1842,26 @@ export const register: Register = on => {
                   <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
                     <Text weight="semibold">{name}</Text>
                     <Box flexDirection="row" columnGap={1}>
-                      <Button key={`edit-agent:${name}`} plain label="编辑" onPress={() => openAgentEditor($, name)} />
+                      <Button key={`edit-agent:${name}`} plain label={p.edit} onPress={() => openAgentEditor($, name)} />
                       <Button
                         key={`del-agent:${name}`}
                         plain
                         dimColor={!isPending}
-                        label={isPending ? '确认删除？' : '删除'}
+                        label={isPending ? p.removeConfirm : p.remove}
                         onPress={() => confirmThen($, `agent:${name}`, () => removeAgent($, name))}
                       />
                     </Box>
                   </Box>
                   <Text size="caption" dimColor>
-                    {agentSummary(preset, groupsAll)}
+                    {agentSummary(preset, groupsAll, lang)}
                   </Text>
                 </Box>
               )
             })}
-            <Button key="new-agent" label="＋ 新建 Agent" onPress={() => openAgentEditor($, null)} />
+            <Button key="new-agent" label={p.createAgent} onPress={() => openAgentEditor($, null)} />
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('技能组', '把零碎装的 skill 归在一起')}
+            {sectionTitle(p.groups, p.groupsHint)}
             {custom.map(group => {
               const isPending = pending === `group:${group.label}`
 
@@ -1666,30 +1870,30 @@ export const register: Register = on => {
                   <Box flexDirection="row" columnGap={1}>
                     <Text>{group.label}</Text>
                     <Text dimColor tabular>
-                      {group.names.length === 0 ? '空' : String(group.names.length)}
+                      {group.names.length === 0 ? p.emptyGroup : String(group.names.length)}
                     </Text>
                   </Box>
                   <Box flexDirection="row" columnGap={1}>
-                    <Button key={`edit-group:${group.label}`} plain label="编辑" onPress={() => openGroupEditor($, group.label)} />
+                    <Button key={`edit-group:${group.label}`} plain label={p.edit} onPress={() => openGroupEditor($, group.label)} />
                     <Button
                       key={`del-group:${group.label}`}
                       plain
                       dimColor={!isPending}
-                      label={isPending ? '确认删除？' : '删除'}
+                      label={isPending ? p.removeConfirm : p.remove}
                       onPress={() => confirmThen($, `group:${group.label}`, () => removeGroup($, group.label))}
                     />
                   </Box>
                 </Box>
               )
             })}
-            <Input key="new-group" placeholder="新技能组名，回车创建" onSubmit={value => createGroup($, value)} />
+            <Input key="new-group" placeholder={p.newGroupPlaceholder} onSubmit={value => createGroup($, value)} />
             <Text size="caption" dimColor>
-              {ungrouped === undefined ? '零碎装的 skill 都已归组' : `还有 ${ungrouped.names.length} 个零碎装的 skill 没归组`}
+              {ungrouped === undefined ? p.allGrouped : p.looseLeft(ungrouped.names.length)}
             </Text>
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('插件和 Claude 自带的 skill', '装的时候就分好组了，不能调整；建 Agent 时可以整组勾选')}
-            {fixed.length === 0 && <Text dimColor>没有</Text>}
+            {sectionTitle(p.fixedGroups, p.fixedGroupsHint)}
+            {fixed.length === 0 && <Text dimColor>{p.none}</Text>}
             {fixed.map(group => (
               <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
                 <Box flexDirection="row" columnGap={1}>
@@ -1703,42 +1907,40 @@ export const register: Register = on => {
             ))}
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('新会话', '发第一条消息时，先弹卡片问这个会话用哪套技能，选好 Claude 才开始读消息')}
+            {sectionTitle(p.newSessions, p.newSessionsHint)}
             <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
-              <Text>先问我用哪套</Text>
+              <Text>{p.askFirst}</Text>
               <Button
                 key="ask-toggle"
                 variant={settings.askOnNewSession ? 'primary' : 'secondary'}
-                label={settings.askOnNewSession ? '开' : '关'}
+                label={settings.askOnNewSession ? p.on : p.off}
                 onPress={() => setAsk($, !settings.askOnNewSession)}
               />
             </Box>
             {!settings.askOnNewSession && (
               <Text size="caption" dimColor>
-                关着的时候，新会话会自动打开这个面板，发第一条消息前在这里选；不选就是「不限制」
+                {p.askOffNote}
               </Text>
             )}
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('子代理', '主代理开子代理时，子代理用哪套技能；fork 出来的总是沿用上级')}
+            {sectionTitle(p.subagents, p.subagentsHint)}
             <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
-              <Text>由谁来选</Text>
+              <Text>{p.whoPicks}</Text>
               <Button
                 key="subagent-picker"
                 variant={settings.subagentPicker === 'person' ? 'primary' : 'secondary'}
-                label={settings.subagentPicker === 'person' ? '我来选' : '主代理'}
+                label={settings.subagentPicker === 'person' ? p.pickerPerson : p.pickerAgent}
                 onPress={() => setSubagentPicker($, settings.subagentPicker === 'person' ? 'agent' : 'person')}
               />
             </Box>
             <Text size="caption" dimColor>
-              {settings.subagentPicker === 'person'
-                ? '每开一个子代理都弹卡片问你，主代理建议的排第一'
-                : '主代理在子代理的任务里写一行「技能装配：名字」来指定；不写就沿用主会话'}
+              {settings.subagentPicker === 'person' ? p.pickerPersonNote : p.pickerAgentNote}
             </Text>
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('数据文件', 'Agent、技能组和上面的设置都存在这里，可以直接编辑，别的工具也能读')}
-            <Text size="caption">{file.path === '' ? '没找到用户目录，只存在插件自己的存储里' : file.path}</Text>
+            {sectionTitle(p.dataFile, p.dataFileHint)}
+            <Text size="caption">{file.path === '' ? p.noHome : file.path}</Text>
             {fileProblem !== undefined && (
               <Text size="caption" color="warning">
                 {fileProblem}
@@ -1749,7 +1951,7 @@ export const register: Register = on => {
             key="reset"
             plain
             dimColor={pending !== 'reset'}
-            label={pending === 'reset' ? 'Agent 和技能组都会恢复成默认，再点一次确认' : '恢复默认设置'}
+            label={pending === 'reset' ? p.resetConfirm : p.reset}
             onPress={() => confirmThen($, 'reset', () => resetLibrary($))}
           />
         </Box>
@@ -1757,16 +1959,15 @@ export const register: Register = on => {
     }
 
     // The main screen.
-    const selection = describeSelection(names, groups, lib, list, await read($, active), [...always])
+    const selection = describeSelection(names, groups, lib, list, await read($, active), [...always], lang)
     const tokensOf = new Map(skills.map(skill => [skill.name, skill.tokens ?? 0]))
     const tokensIn = (members: readonly string[]): number =>
       members.reduce((sum, name) => sum + (tokensOf.get(name) ?? 0), 0)
     const totalTokens = tokensIn(names)
     const loadedTokens = tokensIn(names.filter(name => selection.loaded.has(name)))
-    const tokenText =
-      totalTokens > 0 ? ` · 清单约 ${formatTokens(loadedTokens)} / ${formatTokens(totalTokens)} tokens` : ''
-    const loadedLine = `已装配 ${selection.loaded.size} / ${names.length} 个 skill${tokenText}`
-    const manageButton = <Button key="manage" label="管理" onPress={() => go($, 'manage')} />
+    const tokenText = totalTokens > 0 ? p.listTokens(formatTokens(loadedTokens), formatTokens(totalTokens)) : ''
+    const loadedLine = p.loaded(selection.loaded.size, names.length, tokenText)
+    const manageButton = <Button key="manage" label={p.manage} onPress={() => go($, 'manage')} />
 
     // Locked: what the session has, to look at; how to use a skill it left out; how to get another loadout.
     if (held !== null) {
@@ -1781,30 +1982,30 @@ export const register: Register = on => {
               </Text>
               {manageButton}
             </Box>
-            <Text color="success">● 已锁定：这个会话不再改装配</Text>
+            <Text color="success">{p.lockedState}</Text>
             <Text size="caption" dimColor>
               {loadedLine}
             </Text>
           </Box>
           <Box flexDirection="column" rowGap="xs">
-            {sectionTitle('装配情况', '点组名可以看里面每个 skill')}
+            {sectionTitle(p.loadedHeading, p.loadedHint)}
             {readonlyList(selection.loaded)}
             {always.size > 0 && (
               <Text size="caption" dimColor>
-                {`另有 ${always.size} 个常驻 skill 始终装配`}
+                {p.alwaysCount(always.size)}
               </Text>
             )}
           </Box>
           {subs.length > 0 && (
             <Box flexDirection="column" rowGap="xs">
-              {sectionTitle('子代理', '每个子代理开出来时定下的技能，之后不变')}
+              {sectionTitle(p.subagentsHeading, p.subagentsHeadingHint)}
               {subs
                 .slice(-6)
                 .reverse()
                 .map(one => (
                   <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
-                    <Text>{one.description === '' ? '子代理' : one.description}</Text>
-                    <Text dimColor>{`${one.label} · ${SETTLED_BY[one.by]}`}</Text>
+                    <Text>{one.description === '' ? p.subagent : one.description}</Text>
+                    <Text dimColor>{`${one.label} · ${t.settledBy[one.by]}`}</Text>
                   </Box>
                 ))}
             </Box>
@@ -1812,14 +2013,16 @@ export const register: Register = on => {
           <Box flexDirection="column" borderStyle="round" borderDimColor paddingX="md" paddingY="sm" rowGap="sm">
             {example !== undefined && (
               <Box flexDirection="column">
-                <Text>临时要用没装配的 skill</Text>
-                <Text size="caption" dimColor>{`在消息里写出它的名字就能用，比如 ${example}`}</Text>
+                <Text>{p.useLeftOut}</Text>
+                <Text size="caption" dimColor>
+                  {p.useLeftOutHint(example)}
+                </Text>
               </Box>
             )}
             <Box flexDirection="column">
-              <Text>想换一组 skill</Text>
+              <Text>{p.otherSet}</Text>
               <Text size="caption" dimColor>
-                {settings.askOnNewSession ? '新开一个会话，发第一条消息时会问你用哪套' : '新开一个会话，发第一条消息前在这里选'}
+                {settings.askOnNewSession ? p.otherSetAsk : p.otherSetPanel}
               </Text>
             </Box>
           </Box>
@@ -1834,13 +2037,13 @@ export const register: Register = on => {
           <Box flexDirection="column" rowGap="xs">
             <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
               <Text size="heading" weight="semibold">
-                {TITLE}
+                {t.title}
               </Text>
               {manageButton}
             </Box>
-            <Text color="warning">● 对话里正在问你这个会话用哪套技能</Text>
+            <Text color="warning">{p.askingState}</Text>
             <Text size="caption" dimColor>
-              在那张卡片上选就行，选好之后 Claude 才开始读你的消息
+              {p.askingHint}
             </Text>
           </Box>
         </Box>
@@ -1850,10 +2053,7 @@ export const register: Register = on => {
     // Before the first message: pick an Agent, then adjust its groups for this session.
     const basedOn = selection.basedOn
     const isModified = !selection.isAll && selection.matched === null
-    const status =
-      names.length === 0
-        ? { text: '还没读到已安装的 skill，可以先选 Agent', color: 'subtle' }
-        : { text: '发第一条消息前可以改，发出后就锁定', color: 'warning' }
+    const status = names.length === 0 ? { text: p.noSkillsYet, color: 'subtle' } : { text: p.canChange, color: 'warning' }
     const radio = (key: string, name: string, isOn: boolean, count: string, onPress: () => unknown) => (
       <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={1}>
         <Button key={key} plain onPress={onPress}>
@@ -1881,42 +2081,42 @@ export const register: Register = on => {
           </Text>
           {settings.askOnNewSession && !isChosen && (
             <Text size="caption" dimColor>
-              不在这里选也行：发第一条消息时会弹卡片问你
+              {p.cardWillAsk}
             </Text>
           )}
         </Box>
         <Box flexDirection="column" rowGap="xs">
-          {sectionTitle('① 这个会话用哪个 Agent')}
+          {sectionTitle(p.whichAgent)}
           {agentNames.map(name => {
             const preset = lib.presets[name] ?? { groups: [], skills: [] }
             const size = new Set([...resolvePreset(preset, groups, names), ...always]).size
             return radio(`agent:${name}`, name, selection.matched === name, String(size), () => applyAgent($, name))
           })}
-          {radio('agent:__all', UNLIMITED, selection.isAll, `全部 ${names.length}`, () => applyAgent($, UNLIMITED))}
+          {radio('agent:__all', t.unlimited, selection.isAll, p.everySkill(names.length), () => applyAgent($, t.unlimited))}
           {agentNames.length === 0 && (
             <Text size="caption" dimColor>
-              还没有 Agent：点右上角「管理」新建
+              {p.noAgentsYet}
             </Text>
           )}
         </Box>
         {isModified && (
           <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX="md" paddingY="sm" rowGap="xs">
-            <Text>{basedOn !== null ? `在「${basedOn}」基础上改过` : '现在的装配和哪个 Agent 都不一样'}</Text>
+            <Text>{basedOn !== null ? p.editedFrom(basedOn) : p.matchesNone}</Text>
             <Text size="caption" dimColor>
-              {basedOn !== null ? '点上面的 Agent 可以重新套用；想留下这次的改动：' : '想留下这次的装配：'}
+              {basedOn !== null ? p.keepEditedHint : p.keepHint}
             </Text>
             {basedOn !== null && (
-              <Button key="update-agent" label={`存进「${basedOn}」`} onPress={() => saveAgentFromSession($, basedOn)} />
+              <Button key="update-agent" label={p.saveInto(basedOn)} onPress={() => saveAgentFromSession($, basedOn)} />
             )}
-            <Input key="save-agent" placeholder="新 Agent 名，回车保存" onSubmit={value => saveAgentFromSession($, value)} />
+            <Input key="save-agent" placeholder={p.saveAsPlaceholder} onSubmit={value => saveAgentFromSession($, value)} />
           </Box>
         )}
         <Box flexDirection="column" rowGap="xs">
-          {sectionTitle('② 装了哪些技能组', '发第一条消息前可以增减')}
+          {sectionTitle(p.groupsLoaded, p.groupsLoadedHint)}
           {checklist('m', selection.loaded, (group, isOn) => setGroup($, group, isOn), name => toggleSkill($, name))}
           {always.size > 0 && (
             <Text size="caption" dimColor>
-              {`另有 ${always.size} 个常驻 skill 始终装配`}
+              {p.alwaysCount(always.size)}
             </Text>
           )}
         </Box>

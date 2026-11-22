@@ -1,9 +1,0 @@
-{
-  "name": "skill-loadout",
-  "version": "0.1.0",
-  "description": "Pick a skill set (an Agent) at a new session's first message, and the model sees only that set. Subagents get their own set, and forks keep their parent's. Agents and skill groups live in ~/.skill-loadout/library.json, which other tools can read.",
-  "author": { "name": "chipfighter" },
-  "repository": "https://github.com/chipfighter/skill-loadout",
-  "license": "MIT",
-  "types": "./types/index.d.ts"
-}
