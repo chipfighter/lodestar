@@ -1,0 +1,36 @@
+{
+  "alwaysOn": [
+    "artifact-design",
+    "artifact-capabilities",
+    "artifact-diagramming",
+    "anthropic-skills:built-in-browser",
+    "anthropic-skills:chrome-browser",
+    "anthropic-skills:computer-use",
+    "update-config"
+  ],
+  "groups": {},
+  "presets": {
+    "Coding": {
+      "groups": [],
+      "skills": [
+        "code-review",
+        "simplify",
+        "init",
+        "run",
+        "claude-api",
+        "fewer-permission-prompts",
+        "security-review"
+      ]
+    },
+    "文档办公": {
+      "groups": [],
+      "skills": [
+        "anthropic-skills:docx",
+        "anthropic-skills:pdf",
+        "anthropic-skills:xlsx",
+        "anthropic-skills:pptx",
+        "anthropic-skills:docs"
+      ]
+    }
+  }
+}

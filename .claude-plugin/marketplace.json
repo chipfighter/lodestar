@@ -1,0 +1,11 @@
+{
+  "name": "skill-loadout",
+  "owner": { "name": "chipfighter" },
+  "plugins": [
+    {
+      "name": "skill-loadout",
+      "source": "./",
+      "description": "新会话发第一条消息时选一套 skill（Agent），只把这套交给模型；子代理也各有一套，选好后锁定。"
+    }
+  ]
+}

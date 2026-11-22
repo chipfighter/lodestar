@@ -1,0 +1,9 @@
+{
+  "name": "skill-loadout",
+  "version": "0.1.0",
+  "description": "新会话发第一条消息时选一套 skill（Agent），只把这套交给模型；子代理也各有一套，fork 沿用上级。Agent 和技能组存在 ~/.skill-loadout/library.json，别的工具也能读。",
+  "author": { "name": "chipfighter" },
+  "repository": "https://github.com/chipfighter/skill-loadout",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
