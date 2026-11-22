@@ -5,7 +5,7 @@
     {
       "name": "skill-loadout",
       "source": "./",
-      "description": "新会话发第一条消息时选一套 skill（Agent），只把这套交给模型；子代理也各有一套，选好后锁定。"
+      "description": "Pick a skill set (an Agent) at a new session's first message, and the model sees only that set. Subagents get their own set, and the choice locks after the first turn."
     }
   ]
 }

@@ -1,66 +1,74 @@
-# skill-loadout（技能装配）
+# skill-loadout
 
-给 Claude Code（桌面端和命令行）用的插件。每个新会话发第一条消息时，先选一个 Agent，决定这个会话装配哪些 skill；主代理开的子代理也各有自己的一套。模型只会在 skill 清单里看到装配的那些；没装配的 skill 不占清单预算，模型也不会自己去调用。
+English | [简体中文](README.zh-CN.md)
 
-## 安装
-在会话的输入框里：
+A Claude Code plugin, for the desktop app and the CLI, that lets you choose which skills each session loads. When you send the first message of a new session, you pick an **Agent**: a named set of skills. The model then sees only that set in its skill listing, and the subagents it starts get a set of their own. Skills outside the set take up no room in the listing, and the model won't call them on its own.
+
+> The plugin's interface is in Chinese for now. This README quotes its labels as they appear, followed by a translation.
+
+## Install
+
+In the prompt box of a Claude Code session:
 
 ```
 /plugin install skill-loadout --marketplace chipfighter/skill-loadout
 ```
 
-或者在终端里：
+Or in a terminal:
 
 ```
 claude plugin install skill-loadout --marketplace chipfighter/skill-loadout
 ```
 
-接着按 `y` 添加这个插件市场，再选安装范围。装好后新开一个会话就生效；第一次运行时，会在用户目录下生成 `.skill-loadout/library.json`，里面是两个示例 Agent（见下面「默认值」）。
+Press `y` to add the marketplace, then choose where to install. The plugin applies from the next new session. On its first run it creates `.skill-loadout/library.json` in your home folder, holding two example Agents (see [Defaults](#defaults-loadoutjson)).
 
-在 Windows 的 Claude 桌面端、Claude Code 2.1.330 上开发和测试。
+Developed and tested in the Claude desktop app on Windows, with Claude Code 2.1.330.
 
-## 两个概念
-- **技能组**：skill 的分类。
-  - 跟着插件或 Claude 一起装的 skill，装的时候就是一组（一个插件一组、Claude 自带一组），不能调整。
-  - 零碎装的 skill（`~/.claude/skills` 里一个个的文件夹）可以自己归组，比如「AIGC制作」「剪辑视频」。一个零碎 skill 只能在一个组里；没归组的放在「未归组」。
-- **Agent**：由几个技能组加上单个 skill 拼成，比如「视频制作」= AIGC制作 + 自媒体口播 + 剪辑视频。每个会话选一个。
+## Two concepts
 
-## 怎么用
-- **新会话照常打字、发送第一条消息。** Claude 读到消息之前，会弹出一张卡片（Claude 平时问你问题用的那种）：「这个会话用哪套技能？」
-  - 选项是你的 Agent 和「不限制」（= 装全部 skill）。这个文件夹上次用的 Agent 排在第一个；每个选项下面写着它包含哪些技能组、一共多少个 skill。
-  - Agent 超过 3 个时，两个一批，点「更多 Agent…」换下一批；也可以在卡片的「Other」里直接输入 Agent 名字（不分大小写）。
-  - 选好之后消息才交给 Claude。这时模型还没读过任何东西，所以不影响缓存；消息原样保留，附件也不会丢。
-  - 关掉卡片不选：这个会话按当前的装配开始（没动过就是「不限制」）。
-- 发第一条消息前也可以先在面板里选，或者发 `/loadout Coding`；选过就不再弹卡片。`/loadout` 本身不会弹卡片，也不会让 Claude 开始干活。
-- **发出第一条消息后，装配就锁定**，直到会话结束都不再变：中途改 skill 清单会让前面的对话缓存失效，模型要从头重新读一遍整段对话。
-  - 锁定后面板只显示装了哪些 skill（点组名可以看每一个）。
-  - 临时要用没装配的 skill：在消息里写出它的名字就能用，不影响缓存。
-  - 想换一组 skill：新开一个会话。`/clear` 之后也会重新问。
-  - 恢复以前的会话时，沿用它当初锁定的装配，不弹卡片；装这个插件之前的会话，按「不限制」处理。
-  - 从现有会话 fork 出来的新会话，沿用原会话的装配，不弹卡片。中途停下后桌面端自动分出来的会话也算 fork。
-- **子代理**：主代理开子代理时，子代理用哪套技能，由管理页「子代理 · 由谁来选」决定：
-  - 「主代理」（默认）：主代理在子代理的任务里写一行 `技能装配：Coding`，这个子代理就只装这一套；不写就和主会话一样。会话的第一份 skill 清单里会告诉 Claude 这个写法，以及有哪些 Agent 可选。
-  - 你在消息里直接点名也行，比如"开一个子代理，用 Coding 那套技能……"：主代理没写那一行的话，插件按你消息里点名的那一套给子代理装配（消息里只点名一套时才算）。
-  - 子代理开出来后，主代理会收到一句说明，知道这个子代理装的是哪一套。
-  - 「我来选」：每开一个子代理都弹卡片问你，主代理建议的排第一，最后一项是「和主会话一样」。
-  - fork 出来的子代理总是沿用上级的装配，不问。
-  - 子代理的装配在它开出来时定下，之后不变；它只能用装配给它的 skill（任务里点了名的照常放行）。会话锁定后，面板里能看到每个子代理用的哪一套、是谁选的。
-- 「管理」页：新建、编辑、删除 Agent；新建、编辑、删除技能组（只能放零碎 skill）；恢复默认设置。锁定后也能用，修改从下一个新会话起生效。
-  - 「新会话 · 先问我用哪套」开关：关掉后不弹卡片，新会话会自动打开面板，发第一条消息前在面板里选；不选就是「不限制」。
-  - 「子代理 · 由谁来选」：主代理 / 我来选，见上面。
-- 面板关掉之后有三种方法打开：点输入框上方「技能装配」状态条里的「打开面板」；输入 `/loadout`；或者直接跟 Claude 说"打开技能装配面板"。状态条只在面板关着的时候出现。
+- **Skill group**: a category of skills.
+  - Skills that come with a plugin or with Claude are grouped when they're installed: one group per plugin, and one for Claude's own skills. These groups can't be changed.
+  - Skills you install one at a time (each a folder in `~/.claude/skills`) can go into groups you make, such as "AIGC" or "Video editing". A skill can be in only one group; the ones in no group are listed under 未归组 ("ungrouped").
+- **Agent**: a set built from skill groups and single skills, for example "Video production" = AIGC + Voice-over + Video editing. Each session uses one Agent.
 
-## 数据文件：给别的工具用
-Agent、技能组和设置存在一个普通的 JSON 文件里，以后的托盘客户端、别的 agent 平台的适配都读写它。
+## How to use
 
-- 位置：用户目录下的 `.skill-loadout` 文件夹（Windows 上是 `C:\Users\<用户名>\.skill-loadout`）；设了环境变量 `SKILL_LOADOUT_HOME`，就用那个文件夹。管理页最下面显示实际路径。
-- `library.json`：Agent、技能组和设置。
-  - 面板里的修改都写进这个文件；也可以直接编辑它，下次打开面板、进管理页或者开新会话时读取。
-  - 第一次运行时，用插件以前存的设置生成；没有的话用 `loadout.json` 的默认值。
-  - 文件格式写错了：插件不会动它，先用上次读到的设置，管理页会提示；这时在面板里改动，会用面板的设置覆盖这个文件。
-- `claude-code-skills.json`：插件把 Claude Code 实际看到的 skill 写在这里（最近两周任何会话见过的），给别的工具显示用。插件自己不读它，改它没有效果。
+- **Type and send the first message of a new session as usual.** Before Claude reads it, a card appears, the same kind Claude uses to ask you questions: 这个会话用哪套技能？ ("Which skill set for this session?")
+  - The options are your Agents and 不限制 ("no limit", which loads every skill). The Agent you last used in this folder comes first, and each option lists the skill groups it contains and its total number of skills.
+  - With more than three Agents, the card shows two at a time; choose 更多 Agent… ("more Agents…") for the next two. You can also type an Agent's name in the card's Other box (case doesn't matter).
+  - Your message reaches Claude only after you choose. The model hasn't read anything yet, so the prompt cache is unaffected, and your message arrives as you wrote it, attachments included.
+  - If you close the card without choosing, the session starts with the current set (不限制 unless you changed it).
+- You can also choose before sending the first message, in the panel or by sending `/loadout Coding`; once you've chosen, the card doesn't appear. Sending `/loadout` shows no card and doesn't set Claude to work.
+- **The set locks once the first message is sent** and stays until the session ends, because changing the skill listing midway would invalidate the cached conversation and the model would have to read all of it again.
+  - Once the set is locked, the panel only shows which skills are loaded (click a group's name to see each skill).
+  - To use a skill outside the set, write its name in your message. This doesn't affect the cache.
+  - For a different set, start a new session. `/clear` also brings the card back.
+  - A resumed session keeps the set it locked originally, without a card; sessions from before the plugin was installed count as 不限制.
+  - A session forked from another keeps the original's set, without a card. This includes the session the desktop app splits off on its own after you stop Claude partway.
+- **Subagents.** When the main agent starts a subagent, the setting 子代理 · 由谁来选 ("Subagents · who picks") on the manage page decides who chooses the subagent's set:
+  - 主代理 ("main agent", the default): the main agent adds a line such as `技能装配：Coding` (or `skill loadout: Coding`) to the subagent's task, and the subagent loads only that set; without the line it gets the main session's set. The session's first skill listing tells Claude about this line and which Agents exist.
+  - You can also name the set in your message, for example "start a subagent with the Coding skills…". If the main agent didn't add the line, the plugin gives the subagent the set your message names, as long as it names exactly one.
+  - When the subagent starts, the main agent is told which set it got.
+  - 我来选 ("I pick"): a card asks you each time a subagent starts. The main agent's suggestion comes first, and the last option is 和主会话一样 ("same as the main session").
+  - A forked subagent always keeps its parent's set, without asking.
+  - A subagent's set is fixed when it starts and never changes. It can use only the skills in its set, plus any its task names. Once the session is locked, the panel shows each subagent's set and who chose it.
+- **The manage page** (管理): create, edit and delete Agents; create, edit and delete skill groups (for individually installed skills only); restore the defaults (恢复默认设置). It also works after the lock, and changes apply from the next new session.
+  - 新会话 · 先问我用哪套 ("New sessions · ask me first"): when off, no card appears. A new session opens the panel instead, and you choose there before the first message; without a choice, the session gets 不限制.
+  - 子代理 · 由谁来选 ("Subagents · who picks"): 主代理 ("main agent") or 我来选 ("I pick"), as described above.
+- After you close the panel, there are three ways to open it again: click 打开面板 ("open panel") on the 技能装配 ("skill loadout") bar above the prompt box, type `/loadout`, or ask Claude to open the skill loadout panel. The bar shows only while the panel is closed.
 
-`library.json` 的格式：
+## The data file, for other tools
+
+Agents, skill groups and settings are kept in a plain JSON file, which the planned tray client and the adapters for other agent platforms will read and write too.
+
+- Location: a `.skill-loadout` folder in your home folder (`C:\Users\<you>\.skill-loadout` on Windows), or the folder named by the `SKILL_LOADOUT_HOME` environment variable when it's set. The bottom of the manage page shows the path in use.
+- `library.json`: Agents, skill groups and settings.
+  - Changes you make in the panel are written to this file. You can also edit it by hand; the plugin reads it the next time you open the panel, go to the manage page or start a new session.
+  - On first run, it's created from settings the plugin stored earlier, if any; otherwise from the defaults in `loadout.json`.
+  - If the file has a format error, the plugin leaves it alone, keeps using the settings it read last and says so on the manage page. A change made in the panel then overwrites the file with the panel's settings.
+- `claude-code-skills.json`: the skills Claude Code actually sees, from any session in the last two weeks, written here for other tools to display. The plugin itself never reads it, so editing it has no effect.
+
+The format of `library.json`:
 
 ```json
 {
@@ -68,48 +76,55 @@ Agent、技能组和设置存在一个普通的 JSON 文件里，以后的托盘
   "askOnNewSession": true,
   "subagentPicker": "agent",
   "groups": {
-    "剪辑视频": ["hyperframes", "remotion-*", "!remotion-license"]
+    "Video editing": ["hyperframes", "remotion-*", "!remotion-license"]
   },
   "agents": {
-    "视频制作": { "groups": ["g:剪辑视频", "p:figma"], "skills": ["media-use"] }
+    "Video production": { "groups": ["g:Video editing", "p:figma"], "skills": ["media-use"] }
   }
 }
 ```
 
-- `askOnNewSession`：新会话发第一条消息时是否弹卡片。
-- `subagentPicker`：子代理的技能由谁选，`"agent"`（主代理）或 `"person"`（弹卡片问你）。
-- `groups`：零碎 skill 的技能组，组名 → skill 名列表，支持 `*` 通配（如 `remotion-*`），`!名字` 表示排除。
-- `agents`：Agent 名 → `{ "groups": [...], "skills": [...] }`。`groups` 里写组的编号：`g:组名`（自己的技能组）、`p:插件名`（整个插件）、`s:built-in`（Claude 自带）；只写组名也算 `g:组名`。`skills` 写单个 skill，也可以用通配。
+- `askOnNewSession`: whether a card appears at a new session's first message.
+- `subagentPicker`: who picks a subagent's skills, `"agent"` (the main agent) or `"person"` (you, on a card).
+- `groups`: groups of individually installed skills, mapping a group name to a list of skill names. `*` is a wildcard (as in `remotion-*`), and `!name` leaves a skill out.
+- `agents`: maps an Agent name to `{ "groups": [...], "skills": [...] }`. Each entry in `groups` is a group ID: `g:<group>` for one of your groups, `p:<plugin>` for a whole plugin, or `s:built-in` for Claude's own skills; a bare group name means `g:<group>`. `skills` lists single skills, and wildcards work there too.
 
-## 默认值：loadout.json
-插件自带的默认值，只在两种时候用到：第一次生成 `library.json`，和「恢复默认设置」。
-- 两个示例 Agent，只用 Claude Code 和 Claude 桌面端自带的 skill：
-  - `Coding`：code-review、simplify、init、run、claude-api、fewer-permission-prompts、security-review；
-  - `文档办公`：Word、PDF、Excel、PPT 和文档几个 skill（`anthropic-skills:docx` 等，Claude 桌面端自带）。
-  - 没有技能组：零碎装的 skill 在面板的「管理」里自己归组。
-- `groups`、`presets`：默认的技能组和 Agent，格式同上（`presets` 就是 `agents`）。
-- `alwaysOn`：任何装配下都保留的 skill（会话依赖的系统类 skill，比如桌面端画 Artifact、用浏览器的那几个）。这一项只在这里设置。
+## Defaults: loadout.json
 
-## 原理
-- 选择：第一条消息进入会话之前（`prompt.submit` 钩子），用 Claude 自己提问的卡片问你（`$.ui.ask`），消息等你选完再放行。等待的时间不算插件超时。
-- 过滤：改写发给模型的 `skill_listing` 消息（`prompt.attachment` 钩子）。不改任何设置文件，所以几个会话可以同时用不同的装配，插件里的单个 skill 也能单独取舍。
-- 锁定：会话第一轮开始时（`turn.start` 钩子）冻结装配，并按会话编号存起来，恢复会话时取回。
-- fork：Claude 的每条回复存进对话时（`session.append` 钩子），插件把它的指纹（去掉空白后的哈希，不存原文）记在会话的锁定记录下。fork 出来的会话没有自己的记录，就算出复制过来的各条回复的指纹，找到共同回复最多的那个会话，沿用它的装配。用回复而不用提问，是因为很多会话的第一句都是「你好」，回复却几乎不会一字不差。
-- 子代理：子代理开出来时（`agent.spawn` 钩子）定下它的装配，按子代理编号记住；它的 skill 清单（带子代理编号的 `skill_listing`）照这套过滤，任务里也附上一行它能用哪些 skill。
-- 兜底：模型如果自己调用了没装配的 skill，会被拒绝（`tool.call` 钩子，主会话和每个子代理各按各的装配）；用户在消息里点名的、或者子代理任务里点名的 skill 照常放行。
+The defaults that ship with the plugin. They're used only when `library.json` is first created and when you restore the defaults (恢复默认设置).
 
-## 已知限制
-- 卡片上只能选现成的 Agent，不能临时增减 skill；这个留给下一版的独立客户端。
-- fork 靠 Claude 回复的指纹认原会话；太短的回复（不到 20 个字）和报错信息不算，因为别的会话可能一字不差。原会话的回复都被压缩掉以后就认不出来，按「不限制」处理。
-- 别的会话用工具开出来的新会话，第一条消息就算写的是 `/loadout 名字`，也会当成普通消息发给 Claude，不会执行这个命令。你自己在输入框里发 `/loadout` 有没有这个问题，还没试过。
-- 主代理能不能照说明写那一行，看模型本身；Haiku 就没照做过。所以你在消息里点名的那一套也算数，主代理开子代理之后也会收到一句它装的是哪一套。
-- 别的会话或定时任务开出来的新会话，第一条消息也会弹卡片，要有人选了才继续。不需要的话在管理页关掉卡片。
-- 子代理的装配只记在当前进程里：重启后再唤醒以前的子代理，它沿用主会话的装配。
-- 两个会话同时在面板里改 Agent 或技能组，以后保存的为准。
+- Two example Agents, using only skills that come with Claude Code and the Claude desktop app:
+  - `Coding`: code-review, simplify, init, run, claude-api, fewer-permission-prompts and security-review.
+  - `文档办公` ("office documents"): the Word, PDF, Excel, PowerPoint and docs skills (`anthropic-skills:docx` and the rest, which come with the Claude desktop app).
+  - No skill groups: put your individually installed skills into groups yourself, on the panel's manage page.
+- `groups` and `presets`: the default skill groups and Agents, in the same format as above (`presets` is `agents`).
+- `alwaysOn`: skills kept in every set, which sessions rely on, such as the desktop app's skills for drawing Artifacts and using browsers. This list is set only here.
 
-## 开发
-- 从本地文件夹装：`claude plugin marketplace add <这个文件夹>`，再 `claude plugin install skill-loadout@skill-loadout`。改了代码以后，在会话里输入 `/reload-plugins`，或者新开一个会话。
-- 检查：`claude plugin validate .`、`claude plugin test .`。类型检查（`tsc -p .`）用 `.claude-plugin/types/` 里的定义：Claude Code 加载插件时自动生成，不进 git。
+## How it works
 
-## 许可证
-MIT，见 [LICENSE](LICENSE)。
+- **Choosing**: before the first message enters the session (`prompt.submit` hook), the plugin asks you on the card Claude itself uses for questions (`$.ui.ask`), and holds the message until you choose. Time spent waiting doesn't count against the plugin's time limit.
+- **Filtering**: the plugin rewrites the `skill_listing` message sent to the model (`prompt.attachment` hook). It changes no settings files, so sessions running at the same time can use different sets, and single skills inside a plugin can be kept or left out one by one.
+- **Locking**: when the session's first turn starts (`turn.start` hook), the set is frozen and stored under the session's ID, to be picked up again when the session is resumed.
+- **Forks**: as each of Claude's replies is saved to the conversation (`session.append` hook), the plugin records the reply's fingerprint (a hash of its text with the whitespace removed; the text itself isn't stored) with the session's lock. A forked session has no lock of its own, so the plugin fingerprints the replies copied into it, finds the session that shares the most of them, and keeps that session's set. Replies work better than prompts here: many sessions open with the same "hi", but two replies are almost never word for word the same.
+- **Subagents**: a subagent's set is fixed when it starts (`agent.spawn` hook) and remembered by the subagent's ID. Its skill listing (a `skill_listing` carrying that ID) is filtered to the set, and its task gets a line saying which skills it can use.
+- **Backstop**: if the model calls a skill outside the set anyway, the call is refused (`tool.call` hook), for the main session and each subagent by its own set. Skills that you name in a message, or that a subagent's task names, are still allowed.
+
+## Known limits
+
+- The interface is in Chinese only.
+- The card can only pick an existing Agent, not add or remove skills on the spot; that's left to the standalone client planned for the next version.
+- Forks are matched by the fingerprints of Claude's replies. Very short replies (under 20 characters) and error messages don't count, because another session may contain the same ones word for word. Once the original's replies have all been compacted away, a fork can't be matched and gets 不限制.
+- In a new session started by another session's tool, a first message reading `/loadout <name>` reaches Claude as an ordinary message instead of running the command. Whether sending `/loadout` yourself in the prompt box has the same problem hasn't been tested.
+- Whether the main agent adds that line as instructed depends on the model; Haiku never has. That's why a set you name in your message counts too, and why the main agent is told which set a subagent got once it starts.
+- New sessions started by another session or by a scheduled task also show the card at their first message, and wait until someone chooses. If you don't want that, turn the card off on the manage page.
+- Subagents' sets are remembered only by the running process: after a restart, an earlier subagent that is woken up again gets the main session's set.
+- If two sessions change Agents or skill groups in the panel at the same time, the later save wins.
+
+## Development
+
+- To install from a local folder: `claude plugin marketplace add <this folder>`, then `claude plugin install skill-loadout@skill-loadout`. After changing the code, type `/reload-plugins` in a session or start a new one.
+- Checks: `claude plugin validate .` and `claude plugin test .`. Type checking (`tsc -p .`) uses the definitions in `.claude-plugin/types/`, which Claude Code writes when it loads the plugin; they aren't kept in git.
+
+## License
+
+MIT; see [LICENSE](LICENSE).
