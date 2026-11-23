@@ -32,6 +32,7 @@
     "active": true,
     "targets": ["nsis"],
     "category": "DeveloperTool",
+    "publisher": "chipfighter",
     "shortDescription": "Pick which skills each Claude Code session loads",
     "copyright": "Copyright (c) 2026 chipfighter",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],

@@ -47,6 +47,9 @@ type Page = 'agents' | 'groups' | 'settings'
 
 const PAGES: readonly Page[] = ['agents', 'groups', 'settings']
 
+/** A screenshot for the README (`?shot`): the sample-data tag stays out of the picture. */
+const IS_SHOT = new URLSearchParams(window.location.search).has('shot')
+
 /** The page a link names (`#groups`), so that each page can be opened directly. */
 function pageFromHash(): Page {
   const named = window.location.hash.replace(/^#/, '')
@@ -153,7 +156,7 @@ export function App() {
                 </Tab>
               </TabList>
               <div className={styles.navFooter}>
-                {state.isSample ? (
+                {state.isSample && !IS_SHOT ? (
                   <Tooltip content={strings.sampleHint} relationship="description">
                     <Badge appearance="tint" color="warning" size="medium">
                       {strings.sample}
