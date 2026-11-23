@@ -218,6 +218,20 @@ export function toPreset(selected: readonly string[], groups: readonly Group[]):
   return { groups: whole.map(group => group.id), skills: selected.filter(name => !covered.has(name)) }
 }
 
+/**
+ * An Agent as edited with one platform's skills, with what that platform can't see kept as it was:
+ * whole groups it doesn't have (or that are empty there), and skills nothing there answers to.
+ * Agents are shared by Claude Code and Codex, so an edit made in one keeps the other's skills.
+ */
+export function keepUnseen(edited: Preset, original: Preset | undefined, groups: readonly Group[], names: readonly string[]): Preset {
+  if (original === undefined) return edited
+  const sizes = new Map(groups.map(group => [group.id, group.names.length]))
+  const groupsKept = original.groups.filter(id => (sizes.get(id) ?? 0) === 0 && !edited.groups.includes(id))
+  const skillsKept = original.skills.filter(pattern => !names.some(name => matches(pattern, name)) && !edited.skills.includes(pattern))
+
+  return { groups: [...edited.groups, ...groupsKept], skills: [...edited.skills, ...skillsKept] }
+}
+
 /** A stable signature of a selection, to compare two of them. */
 export function signature(allow: readonly string[] | null): string {
   return allow === null ? '*' : [...new Set(allow)].sort().join('\n')
@@ -260,6 +274,14 @@ export const RESERVED_NAMES: readonly string[] = [...ALL_WORDS, ...MORE_LABELS, 
 /** The longest name an Agent or a group takes. */
 export const MAX_NAME = 40
 
+/**
+ * A name as typed, made safe to keep: no line breaks or other control characters (a name ends up
+ * in other tools' files, such as a comment in Codex's config.toml), no spaces at the ends, MAX_NAME long at most.
+ */
+export function plainName(raw: string): string {
+  return raw.replace(/\p{Cc}/gu, '').trim().slice(0, MAX_NAME)
+}
+
 /** Whether an answer typed under "Other" asks for the client's prepared set. */
 export function isClientWord(answer: string): boolean {
   const typed = answer.trim().toLowerCase()
@@ -267,9 +289,29 @@ export function isClientWord(answer: string): boolean {
   return CLIENT_WORDS.some(word => word.toLowerCase() === typed)
 }
 
-/** The Agents in the order the card offers them: the one this folder used last comes first. */
-export function agentOrder(names: readonly string[], last: string | null): string[] {
-  return last !== null && names.includes(last) ? [last, ...names.filter(name => name !== last)] : [...names]
+/**
+ * The card's choices in the order it offers them: the one this folder used last, then the ones
+ * recent conversations used most (on a tie, the one used more recently), then the rest as listed.
+ * `uses` names what recent conversations used, the newest first.
+ */
+export function rankChoices(choices: readonly string[], uses: readonly string[], last: string | null): string[] {
+  const count = new Map<string, number>()
+  const newest = new Map<string, number>()
+  uses.forEach((name, at) => {
+    count.set(name, (count.get(name) ?? 0) + 1)
+    if (!newest.has(name)) newest.set(name, at)
+  })
+  const ranked = choices
+    .map((name, at) => ({ name, at }))
+    .sort(
+      (a, b) =>
+        (count.get(b.name) ?? 0) - (count.get(a.name) ?? 0) ||
+        (newest.get(a.name) ?? uses.length) - (newest.get(b.name) ?? uses.length) ||
+        a.at - b.at,
+    )
+    .map(one => one.name)
+
+  return last !== null && ranked.includes(last) ? [last, ...ranked.filter(name => name !== last)] : ranked
 }
 
 /**
@@ -282,22 +324,20 @@ export function folderKey(path: string): string {
   return /^[A-Za-z]:/.test(slashed) ? slashed.toLowerCase() : slashed
 }
 
+/** The most options a card holds: Claude Code refuses a fifth. */
+export const CARD_OPTIONS = 4
+
 /**
- * One card's options. The card holds four: the pool and the fixed options when
- * they fit, else a page of the pool beside 「更多 Agent…」, the fixed ones last.
+ * One card's options: the whole pool when it fits, else three of it beside
+ * 「更多 Agent…」, which goes on to the next three, and from the last back to the first.
  */
-export function askPage(
-  pool: readonly string[],
-  start: number,
-  fixed: readonly string[] = [UNLIMITED],
-  more: string = MORE,
-): { options: string[]; next: number } {
-  if (pool.length + fixed.length <= 4) return { options: [...pool, ...fixed], next: 0 }
-  const size = Math.max(1, 3 - fixed.length)
+export function askPage(pool: readonly string[], start: number, more: string = MORE): { options: string[]; next: number } {
+  if (pool.length <= CARD_OPTIONS) return { options: [...pool], next: 0 }
+  const size = CARD_OPTIONS - 1
   const from = start >= 0 && start < pool.length ? start : 0
   const next = from + size >= pool.length ? 0 : from + size
 
-  return { options: [...pool.slice(from, from + size), more, ...fixed], next }
+  return { options: [...pool.slice(from, from + size), more], next }
 }
 
 /**
@@ -512,6 +552,27 @@ export type SeenSkill = SkillEntry & { lastSeen: number }
 const SEEN_DAYS = 14
 
 /**
+ * Whether a skill list file (as parsed) already holds these skills and this always-on list, each
+ * skill's lastSeen aside: then writing it again would change nothing that matters.
+ */
+export function sameCatalog(old: unknown, alwaysOn: readonly string[], skills: readonly SkillEntry[]): boolean {
+  if (typeof old !== 'object' || old === null) return false
+  const file = old as { alwaysOn?: unknown; skills?: unknown }
+  const shape = (list: unknown): string =>
+    JSON.stringify(
+      (Array.isArray(list) ? (list as Record<string, unknown>[]) : []).map(one => [
+        one?.name,
+        one?.source,
+        one?.plugin,
+        one?.tokens,
+        one?.description,
+      ]),
+    )
+
+  return JSON.stringify(file.alwaysOn) === JSON.stringify(alwaysOn) && shape(file.skills) === shape(skills)
+}
+
+/**
  * The skills for claude-code-skills.json: those this session has, and those
  * earlier sessions had in the last two weeks (another folder's project skills).
  */
@@ -682,4 +743,337 @@ export function hiddenNote(hidden: number, label: string, isSubagent = false): s
     : 'in this session. If a task clearly needs one, tell the user they can name it in a message to use it, instead of guessing its name.'
 
   return `\n\n(Skill loadout "${label}": ${count} ${advice})`
+}
+
+// The loadout tool: what Claude reads before it sorts the person's skills, and the changes it saves.
+
+/** A skill's description cut to a line, for a list the model reads whole. */
+function shortAbout(text: string, max = 90): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+}
+
+/** What a group is, in the words the tool's report uses. */
+function groupKind(group: Group): string {
+  if (group.kind === 'custom') return 'category'
+  if (group.kind === 'ungrouped') return 'in no category'
+  return group.id.startsWith('p:') ? 'plugin' : 'Claude'
+}
+
+/**
+ * Everything the model needs to sort skills: each skill with the groups it is in
+ * (by id), the Agents that load it and what it does; each group by id; the
+ * categories as library.json holds them (patterns included); the Agents.
+ */
+export function libraryReport(
+  library: Library,
+  catalog: readonly SkillEntry[],
+  always: readonly string[],
+  lang: Lang = 'zh',
+): Record<string, unknown> {
+  const groups = groupSkills(catalog, library.groups, true, lang)
+  const names = catalog.map(skill => skill.name)
+  const groupsOf = new Map<string, string[]>()
+  for (const group of groups) for (const name of group.names) groupsOf.set(name, [...(groupsOf.get(name) ?? []), group.id])
+  const agentsOf = new Map<string, string[]>()
+  for (const [agent, preset] of Object.entries(library.presets)) {
+    for (const name of resolvePreset(preset, groups, names)) agentsOf.set(name, [...(agentsOf.get(name) ?? []), agent])
+  }
+
+  return {
+    skills: Object.fromEntries(
+      catalog.map(skill => [
+        skill.name,
+        {
+          in: groupsOf.get(skill.name) ?? [],
+          ...(agentsOf.has(skill.name) ? { agents: agentsOf.get(skill.name) } : {}),
+          ...(skill.description ? { about: shortAbout(skill.description) } : {}),
+        },
+      ]),
+    ),
+    groups: Object.fromEntries(
+      groups.map(group => [
+        group.id,
+        { kind: groupKind(group), ...(group.kind === 'fixed' ? { label: group.label } : {}), skills: group.names.length },
+      ]),
+    ),
+    categories: library.groups,
+    agents: Object.fromEntries(
+      Object.entries(library.presets).map(([name, preset]) => [
+        name,
+        { ...preset, loads: new Set([...resolvePreset(preset, groups, names), ...always]).size },
+      ]),
+    ),
+    ...(always.length > 0 ? { everyAgentAlsoLoads: always } : {}),
+  }
+}
+
+/** What the tool's "save" asks for: each category or Agent it names is replaced whole, or deleted with null. */
+export type LibraryChanges = {
+  categories?: Record<string, readonly string[] | null>
+  agents?: Record<string, { groups?: readonly string[]; skills?: readonly string[] } | null>
+  rename?: { categories?: Record<string, string>; agents?: Record<string, string> }
+}
+
+/**
+ * One change a "save" makes. For a changed category or Agent, the skills it
+ * gains and loses; `viaCategories`: an Agent the save did not name, changed by a
+ * category it takes whole.
+ */
+export type LibraryChange =
+  | { kind: 'categoryRenamed' | 'agentRenamed'; from: string; to: string }
+  | { kind: 'categoryMade' | 'agentMade'; name: string; count: number }
+  | {
+      kind: 'categoryChanged' | 'agentChanged'
+      name: string
+      added: string[]
+      removed: string[]
+      count: number
+      viaCategories?: boolean
+    }
+  | { kind: 'categoryDeleted'; name: string; keptBy: string[] }
+  | { kind: 'agentDeleted'; name: string }
+
+/** What checking a "save" came to: the library it makes, what stopped it (then nothing is saved), and what changes. */
+export type ChangesOutcome = { library: Library; problems: string[]; changes: LibraryChange[] }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** A list of text, trimmed, with no empty entry and none twice; undefined when it is not one. */
+function textList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || !value.every(one => typeof one === 'string')) return undefined
+
+  return [...new Set((value as string[]).map(one => one.trim()).filter(one => one !== ''))]
+}
+
+/** Why `name` can't be a category's (or an Agent's) name, or undefined when it can. */
+function nameTrouble(name: string, isAgent: boolean): string | undefined {
+  if (/\p{Cc}/u.test(name)) return `${JSON.stringify(name)} has a line break or another control character in it`
+  if (name.trim() === '') return 'a name is empty'
+  if (name !== name.trim()) return `"${name}" starts or ends with a space`
+  if (name.length > MAX_NAME) return `"${name}" is longer than ${MAX_NAME} characters`
+  if (isAgent && RESERVED_NAMES.includes(name)) return `"${name}" means something else on the card`
+  if (!isAgent && /^[gpsu]:/.test(name)) return `"${name}" starts like a group id`
+
+  return undefined
+}
+
+/** `record`'s entries, or none when it is not an object. */
+function entriesOf(record: unknown): [string, unknown][] {
+  return isRecord(record) ? Object.entries(record) : []
+}
+
+/** The names in `after` and not in `before`, and the other way round. */
+function difference(before: readonly string[], after: readonly string[]): { added: string[]; removed: string[] } {
+  const was = new Set(before)
+  const now = new Set(after)
+
+  return { added: after.filter(name => !was.has(name)), removed: before.filter(name => !now.has(name)) }
+}
+
+/**
+ * Applies a "save": renames first, then categories, then Agents. A category
+ * holds only skills installed on their own; a name or pattern no installed skill
+ * answers to is refused unless the category or Agent already had it. Any
+ * problem refuses the whole save, so that nothing is half done.
+ */
+export function applyChanges(
+  library: Library,
+  changes: unknown,
+  catalog: readonly SkillEntry[],
+  always: readonly string[] = [],
+): ChangesOutcome {
+  const problems: string[] = []
+  const made: LibraryChange[] = []
+  let lib: Library = { groups: { ...library.groups }, presets: { ...library.presets } }
+  const changed = isRecord(changes) ? changes : {}
+  const installed = new Map(catalog.map(skill => [skill.name, skill]))
+  const names = catalog.map(skill => skill.name)
+  const loose = catalog.filter(isLoose).map(skill => skill.name)
+  const membersOf = (patterns: readonly string[]): string[] => loose.filter(name => inGroup(patterns, name))
+  // What an Agent loads, counted as the card counts it: with the skills every set keeps.
+  const loadsOf = (preset: Preset, groups: Record<string, string[]>): string[] => [
+    ...new Set([...resolvePreset(preset, groupSkills(catalog, groups, true), names), ...always]),
+  ]
+  const rename = isRecord(changed.rename) ? changed.rename : {}
+  const agentRenames: [string, string][] = []
+
+  for (const [from, to] of entriesOf(rename.categories)) {
+    if (!(from in lib.groups)) problems.push(`There is no category "${from}" to rename.`)
+    else if (typeof to !== 'string') problems.push(`Category "${from}": the new name must be text.`)
+    else if (to !== from) {
+      const trouble = nameTrouble(to, false) ?? (to in lib.groups ? `a category "${to}" exists already` : undefined)
+      if (trouble !== undefined) problems.push(`Category "${from}" can't be renamed: ${trouble}.`)
+      else {
+        lib = renameGroup(lib, from, to)
+        made.push({ kind: 'categoryRenamed', from, to })
+      }
+    }
+  }
+  for (const [from, to] of entriesOf(rename.agents)) {
+    if (!(from in lib.presets)) problems.push(`There is no Agent "${from}" to rename.`)
+    else if (typeof to !== 'string') problems.push(`Agent "${from}": the new name must be text.`)
+    else if (to !== from) {
+      const trouble = nameTrouble(to, true) ?? (to in lib.presets ? `an Agent "${to}" exists already` : undefined)
+      if (trouble !== undefined) problems.push(`Agent "${from}" can't be renamed: ${trouble}.`)
+      else {
+        lib = {
+          ...lib,
+          presets: Object.fromEntries(Object.entries(lib.presets).map(([name, preset]) => [name === from ? to : name, preset])),
+        }
+        agentRenames.push([from, to])
+        made.push({ kind: 'agentRenamed', from, to })
+      }
+    }
+  }
+
+  for (const [label, value] of entriesOf(changed.categories)) {
+    const existed = label in lib.groups
+    if (value === null) {
+      if (!existed) {
+        problems.push(`There is no category "${label}" to delete.`)
+        continue
+      }
+      const keptBy = Object.keys(lib.presets).filter(name => lib.presets[name]?.groups.includes(`g:${label}`))
+      lib = deleteGroup(lib, label, membersOf(lib.groups[label] ?? []))
+      made.push({ kind: 'categoryDeleted', name: label, keptBy })
+      continue
+    }
+    const list = textList(value)
+    const trouble = existed ? undefined : nameTrouble(label, false)
+    if (list === undefined) {
+      problems.push(`Category "${label}": give a list of skill names, or null to delete it.`)
+      continue
+    }
+    if (trouble !== undefined) {
+      problems.push(`Category "${label}" can't be made: ${trouble}.`)
+      continue
+    }
+    const old = lib.groups[label] ?? []
+    const wrong: string[] = []
+    for (const entry of list) {
+      if (old.includes(entry) || entry.startsWith('!')) continue
+      if (entry.includes('*')) {
+        if (!loose.some(name => matches(entry, name))) wrong.push(`"${entry}" matches no skill installed on its own`)
+        continue
+      }
+      const skill = installed.get(entry)
+      if (skill === undefined) wrong.push(`"${entry}" is not an installed skill`)
+      else if (!isLoose(skill)) {
+        const from = skill.plugin !== undefined || entry.includes(':') ? 'came with a plugin' : 'comes with Claude'
+        wrong.push(`"${entry}" ${from}; only skills installed on their own go in categories (an Agent can take it as a single skill)`)
+      }
+    }
+    if (wrong.length > 0) {
+      problems.push(`Category "${label}": ${wrong.join('; ')}.`)
+      continue
+    }
+    lib = { ...lib, groups: { ...lib.groups, [label]: list } }
+    const after = membersOf(list)
+    if (!existed) made.push({ kind: 'categoryMade', name: label, count: after.length })
+    else {
+      const { added, removed } = difference(membersOf(old), after)
+      if (added.length + removed.length > 0) made.push({ kind: 'categoryChanged', name: label, added, removed, count: after.length })
+    }
+  }
+
+  const groupIds = new Set(groupSkills(catalog, lib.groups, true).map(group => group.id))
+  const isSet = new Set<string>()
+  for (const [name, value] of entriesOf(changed.agents)) {
+    const old = lib.presets[name]
+    if (value === null) {
+      if (old === undefined) problems.push(`There is no Agent "${name}" to delete.`)
+      else {
+        lib = { ...lib, presets: Object.fromEntries(Object.entries(lib.presets).filter(([one]) => one !== name)) }
+        made.push({ kind: 'agentDeleted', name })
+      }
+      continue
+    }
+    const trouble = old === undefined ? nameTrouble(name, true) : undefined
+    const groups = isRecord(value) ? (value.groups === undefined ? [] : textList(value.groups)) : undefined
+    const skills = isRecord(value) ? (value.skills === undefined ? [] : textList(value.skills)) : undefined
+    if (groups === undefined || skills === undefined) {
+      problems.push(`Agent "${name}": give { groups: [...], skills: [...] }, or null to delete it.`)
+      continue
+    }
+    if (trouble !== undefined) {
+      problems.push(`Agent "${name}" can't be made: ${trouble}.`)
+      continue
+    }
+    const wrong: string[] = []
+    const ids = groups.map(groupRef)
+    ids.forEach((id, at) => {
+      if (id === UNGROUPED_ID) wrong.push(`"${UNGROUPED_ID}" can't be taken whole; list those skills one by one`)
+      else if (!groupIds.has(id) && !(old?.groups.includes(id) ?? false)) {
+        wrong.push(`"${groups[at]}" is not a group (ids look like g:<category>, p:<plugin>, s:<source>, as "list" shows)`)
+      }
+    })
+    for (const entry of skills) {
+      if (old?.skills.includes(entry) ?? false) continue
+      const isKnown = entry.includes('*') ? names.some(one => matches(entry, one)) : installed.has(entry)
+      if (!isKnown) wrong.push(`"${entry}" ${entry.includes('*') ? 'matches no installed skill' : 'is not an installed skill'}`)
+    }
+    // What Claude Code doesn't have (Codex's skills, say) stays in the Agent: the tool only sees Claude Code's.
+    const preset = keepUnseen({ groups: [...new Set(ids)], skills }, old, groupSkills(catalog, lib.groups, true), names)
+    if (wrong.length === 0 && resolvePreset(preset, groupSkills(catalog, lib.groups, true), names).length === 0) {
+      wrong.push('it would load no skill')
+    }
+    if (wrong.length > 0) {
+      problems.push(`Agent "${name}": ${wrong.join('; ')}.`)
+      continue
+    }
+    if (old === undefined || JSON.stringify(old) !== JSON.stringify(preset)) isSet.add(name)
+    lib = { ...lib, presets: { ...lib.presets, [name]: preset } }
+  }
+  if (problems.length > 0) return { library, problems, changes: [] }
+
+  // Each Agent whose skills changed, the ones a category's change reached included.
+  for (const [name, preset] of Object.entries(lib.presets)) {
+    const was = library.presets[agentRenames.find(([, to]) => to === name)?.[0] ?? name]
+    const after = loadsOf(preset, lib.groups)
+    if (was === undefined) {
+      made.push({ kind: 'agentMade', name, count: after.length })
+      continue
+    }
+    const { added, removed } = difference(loadsOf(was, library.groups), after)
+    if (added.length + removed.length > 0) {
+      made.push({ kind: 'agentChanged', name, added, removed, count: after.length, ...(isSet.has(name) ? {} : { viaCategories: true }) })
+    }
+  }
+
+  return { library: lib, problems, changes: made }
+}
+
+/** Up to `max` names, then how many more. */
+function someNames(names: readonly string[], max = 4): string {
+  return names.length <= max ? names.join(', ') : `${names.slice(0, max).join(', ')} and ${names.length - max} more`
+}
+
+/** A change as the model reads it after a save. */
+export function changeForModel(change: LibraryChange): string {
+  switch (change.kind) {
+    case 'categoryRenamed':
+      return `category "${change.from}" renamed "${change.to}"`
+    case 'agentRenamed':
+      return `Agent "${change.from}" renamed "${change.to}"`
+    case 'categoryMade':
+      return `category "${change.name}" made with ${change.count} skills`
+    case 'agentMade':
+      return `Agent "${change.name}" made, loading ${change.count} skills`
+    case 'categoryDeleted':
+      return `category "${change.name}" deleted${change.keptBy.length > 0 ? ` (${change.keptBy.join(', ')} keep its skills one by one)` : ''}`
+    case 'agentDeleted':
+      return `Agent "${change.name}" deleted`
+    default: {
+      const parts = [
+        ...(change.added.length > 0 ? [`gains ${someNames(change.added)}`] : []),
+        ...(change.removed.length > 0 ? [`loses ${someNames(change.removed)}`] : []),
+      ]
+      const what = change.kind === 'categoryChanged' ? 'category' : 'Agent'
+      const via = change.viaCategories === true ? ', through a category it takes whole' : ''
+      return `${what} "${change.name}" ${parts.join(' and ')} (now ${change.count}${via})`
+    }
+  }
 }

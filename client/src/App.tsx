@@ -38,6 +38,7 @@ import { LibraryPage } from './pages/LibraryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { AppIcon } from './ui/AppIcon'
 import { NotifyContext, type Notify } from './ui/common'
+import { PlatformContext, PlatformPicker, initialPlatform, rememberPlatform, type Platform } from './ui/platform'
 
 const AgentsIcon = bundleIcon(PeopleTeam24Filled, PeopleTeam24Regular)
 const LibraryIcon = bundleIcon(Library24Filled, Library24Regular)
@@ -101,10 +102,22 @@ export function App() {
     return () => window.removeEventListener('hashchange', followed)
   }, [])
   const strings = stringsFor(state.value.prefs.language, navigator.language)
-  const model = useMemo(
-    () => buildModel(state.catalog.skills, state.value.library, state.catalog.alwaysOn),
-    [state.catalog, state.value.library],
-  )
+  // Codex can be picked only where it is installed.
+  const [chosen, setChosen] = useState<Platform>(initialPlatform)
+  const hasCodex = state.codex.info != null
+  const available = useMemo(() => new Set<Platform>(hasCodex ? ['claude', 'codex'] : ['claude']), [hasCodex])
+  const platform: Platform = available.has(chosen) ? chosen : 'claude'
+  const choosePlatform = useCallback((next: Platform) => {
+    setChosen(next)
+    rememberPlatform(next)
+  }, [])
+  const model = useMemo(() => {
+    if (platform === 'claude') return buildModel(state.catalog.skills, state.value.library, state.catalog.alwaysOn)
+    // What the person switched off in Codex themselves; Lodestar's own switches come and go with the Agent.
+    const ours = new Set(state.codex.record?.names ?? [])
+    const off = state.codex.off.filter(name => !ours.has(name))
+    return buildModel(state.codex.catalog.skills, state.value.library, state.codex.catalog.alwaysOn, off)
+  }, [platform, state.catalog, state.value.library, state.codex.catalog, state.codex.off, state.codex.record])
   const toasterId = useId('toaster')
   const { dispatchToast } = useToastController(toasterId)
   const notify = useCallback<Notify>(
@@ -128,6 +141,7 @@ export function App() {
   return (
     <FluentProvider theme={isDark ? webDarkTheme : webLightTheme}>
       <StringsContext.Provider value={strings}>
+        <PlatformContext.Provider value={platform}>
         <NotifyContext.Provider value={notify}>
           <div className={styles.shell}>
             <nav className={styles.nav} aria-label={strings.appName}>
@@ -135,6 +149,7 @@ export function App() {
                 <AppIcon size={34} />
                 <Subtitle2>{strings.appName}</Subtitle2>
               </div>
+              <PlatformPicker platform={platform} available={available} onChange={choosePlatform} />
               <TabList
                 vertical
                 size="large"
@@ -180,6 +195,7 @@ export function App() {
           </div>
           <Toaster toasterId={toasterId} position="bottom-end" />
         </NotifyContext.Provider>
+        </PlatformContext.Provider>
       </StringsContext.Provider>
     </FluentProvider>
   )

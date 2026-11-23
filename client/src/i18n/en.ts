@@ -10,6 +10,7 @@ export const en: Strings = {
   sample: 'Sample data',
   sampleHint: "Previewing in a browser: this is sample data, and changes aren't written to your files.",
   nav: { agents: 'Agents', library: 'Skill library', settings: 'Settings' },
+  platform: { label: 'Platform', notFound: 'Not found' },
 
   skillCount: n => plural(n, 'skill', 'skills'),
   tokens: text => `~${text} tokens`,
@@ -30,7 +31,14 @@ export const en: Strings = {
     ungrouped: 'Uncategorized',
     alwaysOn: 'Always on',
   },
-  sources: { 'built-in': 'Built into Claude', policySettings: 'Organization', mcp: 'MCP', other: 'Other' },
+  sources: {
+    'built-in': 'Built into Claude',
+    policySettings: 'Organization',
+    mcp: 'MCP',
+    other: 'Other',
+    'codex-system': 'Built into Codex',
+    'codex-admin': 'Installed by an admin',
+  },
   alwaysOnHint: 'System skills that sessions rely on. Every set has them, and they cannot be turned off.',
 
   agents: {
@@ -75,11 +83,32 @@ export const en: Strings = {
     nextUsed: 'The prepared set was taken by a new session.',
     nextExpired: 'The prepared set went unused for 2 hours and has expired.',
     withdraw: 'Withdraw',
+    introCodex:
+      'An Agent is a set of skills; Agents and categories are shared with Claude Code. Put one together here and choose Use for Codex, and new Codex sessions see only that set.',
+    noSkillsCodex: "Codex's skills haven't been read yet.",
+    readingCodex: "Reading Codex's skills…",
+    useForCodex: 'Use for Codex',
+    useForCodexHint: "New Codex sessions see only this set until you pick another. Sessions already open don't change.",
+    saveFirst: 'Save your changes first, then use it for Codex',
+    inUseByCodex: 'Codex uses this',
+    codexBadge: 'Codex',
+    codexDone: (name, off) => `Done: new Codex sessions use "${name}", with ${plural(off, 'skill', 'skills')} switched off.`,
+  },
+
+  codex: {
+    using: (name, count) => `New Codex sessions use "${name}": ${plural(count, 'skill', 'skills')}. Sessions already open don't change.`,
+    all: count => `Codex has no limit now: new sessions see all ${plural(count, 'skill', 'skills')}. Choose an Agent on the left, then Use for Codex.`,
+    gone: name => `"${name}", which Codex uses, was deleted. New sessions still get the set it had.`,
+    setAll: 'Remove the limit',
+    setAllDone: 'Codex has no limit again: new sessions see every skill.',
+    failed: error => `Something went wrong with Codex: ${error}`,
+    offHere: 'Off in Codex',
+    offHereHint: "You switched it off in Codex's Skills page, so no Agent can use it. Switch it on in Codex to use it.",
   },
 
   picker: {
     legend: 'Tick a whole group to use all of it, including skills it gains later. Open a group and tick a few to use just those.',
-    sections: { loose: 'Installed on their own', fixed: 'Plugins and built-in' },
+    sections: { loose: 'Installed on their own', fixed: 'Plugins and built-in', fixedCodex: 'Plugins and built-in' },
     whole: 'Whole group',
     wholeHint: 'Skills this group gains later come along too',
     some: (picked, total) => `Just ${picked}/${total}`,
@@ -112,6 +141,10 @@ export const en: Strings = {
     removed: (skill, from) => `Took ${skill} out of "${from}"`,
     deleteTitle: name => `Delete the category "${name}"?`,
     deleteBody: "Its skills stay in any other categories they're in, and the rest go back to Uncategorized. Agents that use the category list those skills one by one instead, so they load the same.",
+    introCodex:
+      "Every skill Codex has, by where it came from: what each one does, and which Agents use it. Categories are shared with Claude Code and match skills by name.",
+    fixedCodex: 'Plugins and built-in',
+    fixedHintCodex: "Grouped by where they came from, a Codex plugin or Codex itself, and can't be changed. An Agent can tick a whole group.",
   },
 
   settings: {
@@ -123,6 +156,21 @@ export const en: Strings = {
     pickerHint: 'Main agent: it adds a line like "skill loadout: <name>" to the subagent\'s task. Me: a card asks you each time a subagent starts. Forked subagents always keep their parent\'s set.',
     pickerAgent: 'Main agent',
     pickerPerson: 'Me',
+    codex: 'Codex',
+    codexNone: 'Codex not found',
+    codexNoneHint: 'Once Codex is installed (the desktop app or the CLI), Codex switches show up here and at the top left.',
+    codexUsing: 'New Codex sessions use',
+    codexAll: 'No limit: every skill',
+    codexGone: name => `"${name}" (deleted)`,
+    codexSkills: "Codex's skill list",
+    codexSkillsOk: (count, when) => `${plural(count, 'skill', 'skills')} · read ${when}`,
+    codexSkillsNone: 'Not read yet',
+    codexReading: 'Reading…',
+    refresh: 'Refresh',
+    codexConfig: "Codex's settings file",
+    codexConfigHint:
+      'When you switch Agents, Lodestar changes only its own entries here (marked # lodestar) and nothing else. Before its first change it saves a copy as config.toml.lodestar-backup.',
+    codexProgram: 'Codex program',
     app: 'This app',
     language: 'Language',
     languageHint: "The plugin's card and panel, and this app, use this language.",

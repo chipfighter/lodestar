@@ -39,11 +39,12 @@ import {
   Rename20Regular,
 } from '@fluentui/react-icons'
 
-import { MAX_NAME, type Group } from '@shared/listing'
+import { MAX_NAME, plainName, type Group } from '@shared/listing'
 import { matchesSearch, type Model } from '../data/model'
 import { NameTakenError, type Actions, type DataState } from '../data/useData'
 import { useStrings } from '../i18n'
 import { PageHeader, groupTitle, useNotify } from '../ui/common'
+import { usePlatform } from '../ui/platform'
 
 const useStyles = makeStyles({
   page: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 },
@@ -122,7 +123,7 @@ const useStyles = makeStyles({
 })
 
 function cleanName(raw: string): string {
-  return raw.trim().slice(0, MAX_NAME)
+  return plainName(raw)
 }
 
 type Shown = { group: Group; names: string[] }
@@ -138,6 +139,7 @@ export function LibraryPage({ state, actions, model }: { state: DataState; actio
   const strings = useStrings()
   const t = strings.library
   const notify = useNotify()
+  const isCodex = usePlatform() === 'codex'
   const [query, setQuery] = useState('')
   // Categories and the uncategorized skills open by themselves, plugins and the rest closed; a click flips one.
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set())
@@ -272,6 +274,13 @@ export function LibraryPage({ state, actions, model }: { state: DataState; actio
               {t.alsoIn(elsewhere.join(strings.listSep))}
             </Badge>
           ) : null}
+          {model.off.has(name) ? (
+            <Tooltip content={strings.codex.offHereHint} relationship="description">
+              <Badge appearance="outline" color="warning" size="small">
+                {strings.codex.offHere}
+              </Badge>
+            </Tooltip>
+          ) : null}
           {isAlways ? (
             <Tooltip content={strings.alwaysOnHint} relationship="description">
               <Badge appearance="outline" color="subtle" size="small">
@@ -399,7 +408,7 @@ export function LibraryPage({ state, actions, model }: { state: DataState; actio
 
   return (
     <div className={styles.page}>
-      <PageHeader title={t.title} intro={t.intro} />
+      <PageHeader title={t.title} intro={isCodex ? t.introCodex : t.intro} />
       <div className={styles.toolbar}>
         <SearchBox className={styles.search} placeholder={t.search} value={query} onChange={(_, data) => setQuery(data.value)} />
       </div>
@@ -444,8 +453,8 @@ export function LibraryPage({ state, actions, model }: { state: DataState; actio
         {fixed.length > 0 ? (
           <section className={styles.section}>
             <div className={styles.sectionHead}>
-              <Subtitle2 as="h2">{t.fixed}</Subtitle2>
-              <Caption1 className={styles.hint}>{t.fixedHint}</Caption1>
+              <Subtitle2 as="h2">{isCodex ? t.fixedCodex : t.fixed}</Subtitle2>
+              <Caption1 className={styles.hint}>{isCodex ? t.fixedHintCodex : t.fixedHint}</Caption1>
             </div>
             <div className={styles.card}>{fixed.map(block)}</div>
           </section>

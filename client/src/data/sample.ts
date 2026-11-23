@@ -1,6 +1,7 @@
 // Sample files for running the client in a plain browser (`pnpm dev`), where
 // there is no data folder to read. Nothing here is anyone's real setup.
 
+import type { CodexInfo, CodexListed } from './codex'
 import { DEFAULTS, FILES, type FileName } from './files'
 
 type Sample = { name: string; tokens: number; description: string; source: string; plugin?: string }
@@ -59,6 +60,60 @@ const SKILLS: Sample[] = [
   loose('api-conventions', 45, "This repository's API naming and error conventions.", 'projectSettings'),
 ]
 
+/** Where Codex is, as the sample tells it. */
+export const SAMPLE_CODEX_INFO: CodexInfo = {
+  program: 'C:\\Users\\you\\AppData\\Local\\OpenAI\\Codex\\bin\\codex.exe',
+  home: 'C:\\Users\\you\\.codex',
+  config: 'C:\\Users\\you\\.codex\\config.toml',
+}
+
+const codexUser = (name: string, description: string, enabled = true): CodexListed => ({
+  name,
+  description,
+  scope: 'user',
+  enabled,
+  pluginId: null,
+  path: `C:\\Users\\you\\.agents\\skills\\${name}\\SKILL.md`,
+})
+const codexSystem = (name: string, description: string): CodexListed => ({ name, description, scope: 'system', enabled: true, pluginId: null })
+const codexPlugin = (plugin: string, name: string, description: string): CodexListed => ({
+  name: `${plugin.split('@')[0]}:${name}`,
+  description,
+  scope: 'user',
+  enabled: true,
+  pluginId: plugin,
+})
+
+/** The skills a person's Codex might list: many of the same loose ones as Claude Code, Codex's own, and its plugins'. */
+export function sampleCodexSkills(): CodexListed[] {
+  return [
+    codexUser('image-prompt', '把画面想法转成包含机位、构图、光线和色彩的摄影提示词。'),
+    codexUser('remotion-render', 'Export a Remotion video, still image or timeline.'),
+    codexUser('remotion-captions', 'Transcribe, display and animate captions in Remotion.'),
+    codexUser('hyperframes', 'Make, animate and render videos written in HTML.'),
+    codexUser('media-use', 'Get or make music, sound effects, images and voice-over for a video.'),
+    codexUser('meeting-notes', '把会议录音或记录整理成纪要和待办事项。'),
+    codexUser('release-notes', 'Write release notes from merged pull requests.'),
+    codexUser('brand-voice', "Rewrite copy in the team's brand voice."),
+    codexUser('sql-helper', 'Explain, write and tune SQL queries.'),
+    codexUser('regex-coach', 'Build and explain regular expressions, with test cases.'),
+    codexUser('travel-planner', 'Plan a trip: routes, bookings and a packing list.', false),
+    codexUser('pr-triage', 'Sort open pull requests by risk and size, and suggest reviewers.'),
+    codexPlugin('coding-discipline@coding-discipline', 'systematic-debugging', 'Find the root cause of a failure before fixing it.'),
+    codexPlugin('coding-discipline@coding-discipline', 'spec-sync', 'Keep the project spec in step with confirmed decisions.'),
+    codexPlugin('documents@openai-primary-runtime', 'documents', 'Create and edit Word documents.'),
+    codexPlugin('pdf@openai-primary-runtime', 'pdf', 'Read, fill and make PDF files.'),
+    codexPlugin('spreadsheets@openai-primary-runtime', 'Spreadsheets', 'Build and edit spreadsheets, with formulas and charts.'),
+    codexPlugin('visualize@openai-bundled', 'visualize', 'Interactive charts, maps and diagrams, right in Codex.'),
+    codexPlugin('computer-use@openai-bundled', 'computer-use', 'Control Windows apps.'),
+    codexSystem('imagegen', 'Generate or edit raster images: photos, illustrations, sprites, mockups.'),
+    codexSystem('openai-docs', "Codex's and OpenAI's own documentation: models, settings, skills, APIs."),
+    codexSystem('skill-creator', 'Create or update a Codex skill.'),
+    codexSystem('skill-installer', 'Install Codex skills from a curated list or a GitHub repository.'),
+    codexSystem('review-agent', 'Review a code change when another agent delegates it.'),
+  ]
+}
+
 const LIBRARY = {
   version: 1,
   askOnNewSession: true,
@@ -69,9 +124,21 @@ const LIBRARY = {
     写作: ['meeting-notes', 'release-notes', 'brand-voice'],
   },
   agents: {
+    // Claude Code's own skills, and Codex's: each platform loads the ones it has.
     Coding: {
-      groups: [],
-      skills: ['code-review', 'simplify', 'init', 'run', 'claude-api', 'fewer-permission-prompts', 'security-review'],
+      groups: ['p:coding-discipline'],
+      skills: [
+        'code-review',
+        'simplify',
+        'init',
+        'run',
+        'claude-api',
+        'fewer-permission-prompts',
+        'security-review',
+        'sql-helper',
+        'regex-coach',
+        'pr-triage',
+      ],
     },
     Docs: {
       groups: [],
@@ -86,7 +153,7 @@ const LIBRARY = {
  * The data folder's files as a person who uses the plugin might have them, `now` being the time they
  * are read; with `isPrepared`, a set prepared for the next session a few minutes ago (`?prepared`).
  */
-export function sampleFiles(now: number, isPrepared = false): Partial<Record<FileName, string>> {
+export function sampleFiles(now: number, isPrepared = false, language = 'zh'): Partial<Record<FileName, string>> {
   const catalog = {
     platform: 'claude-code',
     updatedAt: new Date(now - 3 * 60_000).toISOString(),
@@ -103,9 +170,14 @@ export function sampleFiles(now: number, isPrepared = false): Partial<Record<Fil
     usedBy: null,
   }
 
+  // New Codex sessions use an Agent named in the language shown; the client works out what it switches off as it starts.
+  const agent = language.toLowerCase().startsWith('zh') ? '视频制作' : 'Coding'
+  const codex = { version: 1, agent, names: [], appliedAt: now - 20 * 60_000, config: SAMPLE_CODEX_INFO.config }
+
   return {
     [FILES.library]: `${JSON.stringify(LIBRARY, null, 2)}\n`,
     [FILES.catalog]: `${JSON.stringify(catalog, null, 2)}\n`,
+    [FILES.codex]: `${JSON.stringify(codex, null, 2)}\n`,
     ...(isPrepared ? { [FILES.next]: `${JSON.stringify(prepared, null, 2)}\n` } : {}),
   }
 }

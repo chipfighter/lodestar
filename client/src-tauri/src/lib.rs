@@ -20,8 +20,17 @@ use tauri::{
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_opener::OpenerExt;
 
-/// The files the client shares with the plugin; no other name in the folder is read or written.
-const FILES: [&str; 4] = ["library.json", "claude-code-skills.json", "next-session.json", "client.json"];
+mod codex;
+
+/// The files the client shares with the plugin, and Codex's two; no other name in the folder is read or written.
+const FILES: [&str; 6] = [
+    "library.json",
+    "claude-code-skills.json",
+    "next-session.json",
+    "client.json",
+    "codex-skills.json",
+    "codex.json",
+];
 
 /// What the login item starts the app with: it waits in the tray, its window hidden.
 const MINIMIZED: &str = "--minimized";
@@ -60,7 +69,7 @@ fn file_path(name: &str) -> Result<PathBuf, String> {
 }
 
 /// Writes the text beside the file, then swaps it in, so that no reader (the plugin) ever sees it half written.
-fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -114,6 +123,36 @@ fn remove_data(name: String) -> Result<(), String> {
 fn open_data_dir(app: AppHandle) -> Result<(), String> {
     let dir = shared_dir().ok_or("no home folder")?;
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+/// Where Codex is and where its settings are; null where Codex isn't installed.
+#[tauri::command]
+async fn codex_info() -> Option<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(codex::info).await.ok().flatten()
+}
+
+/// Every skill Codex has, as Codex itself lists them.
+#[tauri::command]
+async fn codex_skills() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(codex::skills).await.map_err(|error| error.to_string())?
+}
+
+/// Switches off `names` for new Codex sessions (the Agent `agent`; null for every skill).
+#[tauri::command]
+async fn codex_apply(agent: Option<String>, names: Vec<String>) -> Result<serde_json::Value, String> {
+    let dir = shared_dir().ok_or("no home folder")?;
+    tauri::async_runtime::spawn_blocking(move || codex::apply(&dir, agent, names))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// Opens Codex's folder, where its config.toml is, in Explorer.
+#[tauri::command]
+fn open_codex_dir(app: AppHandle) -> Result<(), String> {
+    let dir = codex::home().ok_or("no home folder")?;
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
         .map_err(|error| error.to_string())
@@ -236,7 +275,11 @@ pub fn run() {
             remove_data,
             open_data_dir,
             show_main,
-            set_labels
+            set_labels,
+            codex_info,
+            codex_skills,
+            codex_apply,
+            open_codex_dir
         ])
         .setup(|app| {
             build_tray(app)?;

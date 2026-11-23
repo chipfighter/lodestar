@@ -7,6 +7,7 @@ import type { Group } from '@shared/listing'
 import { formatTokens, matchesSearch, tokensOf, type Model } from '../data/model'
 import { useStrings } from '../i18n'
 import { groupTitle } from './common'
+import { usePlatform } from './platform'
 
 const useStyles = makeStyles({
   list: { display: 'flex', flexDirection: 'column', gap: '6px', padding: '4px 0 16px' },
@@ -73,12 +74,15 @@ type Props = {
   onChange: (next: Set<string>) => void
   query: string
   isOnlySelected: boolean
+  /** What shows while the platform's skills aren't known yet. */
+  emptyText: string
 }
 
 /** Groups and their skills with checkboxes: a group's box ticks all of it; always-on skills stay ticked. */
-export function SkillPicker({ model, selected, onChange, query, isOnlySelected }: Props) {
+export function SkillPicker({ model, selected, onChange, query, isOnlySelected, emptyText }: Props) {
   const styles = useStyles()
   const strings = useStrings()
+  const platform = usePlatform()
   // Groups part-picked open by themselves; the person opens and closes the rest.
   const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set())
   const isFiltering = query.trim() !== '' || isOnlySelected
@@ -99,7 +103,7 @@ export function SkillPicker({ model, selected, onChange, query, isOnlySelected }
     [model, query, isOnlySelected, selected, isFiltering],
   )
 
-  if (model.names.length === 0) return <Body1 className={styles.empty}>{strings.agents.noSkills}</Body1>
+  if (model.names.length === 0) return <Body1 className={styles.empty}>{emptyText}</Body1>
   if (shown.length === 0) return <Body1 className={styles.empty}>{strings.agents.noMatch}</Body1>
 
   const toggleOpen = (id: string): void =>
@@ -169,7 +173,11 @@ export function SkillPicker({ model, selected, onChange, query, isOnlySelected }
     <div className={styles.list}>
       {loose.length > 0 ? <Caption1 className={styles.sectionLabel}>{strings.picker.sections.loose}</Caption1> : null}
       {loose.map(row)}
-      {fixed.length > 0 ? <Caption1 className={styles.sectionLabel}>{strings.picker.sections.fixed}</Caption1> : null}
+      {fixed.length > 0 ? (
+        <Caption1 className={styles.sectionLabel}>
+          {platform === 'codex' ? strings.picker.sections.fixedCodex : strings.picker.sections.fixed}
+        </Caption1>
+      ) : null}
       {fixed.map(row)}
     </div>
   )
@@ -224,6 +232,13 @@ function GroupSkills({
                   <Badge appearance="outline" color="informative" size="small">
                     {strings.library.alsoIn(elsewhere.join(strings.listSep))}
                   </Badge>
+                ) : null}
+                {model.off.has(name) ? (
+                  <Tooltip content={strings.codex.offHereHint} relationship="description">
+                    <Badge appearance="outline" color="warning" size="small">
+                      {strings.codex.offHere}
+                    </Badge>
+                  </Tooltip>
                 ) : null}
               </div>
               {skill?.description ? (

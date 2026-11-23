@@ -2,6 +2,9 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   DEFAULT_PREFS,
+  applyChanges,
+  askPage,
+  changeForModel,
   deleteGroup,
   describeSelection,
   entryName,
@@ -15,13 +18,16 @@ import {
   setMember,
   normalizeConfig,
   pickOption,
+  plainName,
   promptMark,
+  rankChoices,
   readLibraryFile,
   readNextSession,
   renameGroup,
   setChanges,
   setNamedIn,
   resolvePreset,
+  sameCatalog,
   toPreset,
   usedNextSession,
   withoutSkill,
@@ -42,6 +48,11 @@ const LISTING = [
   '- code-review: Review the current diff',
   '- update-config: Use this skill to configure the harness',
 ].join('\n')
+
+/** What the main conversation's first listing ends with: where Claude changes the person's categories and Agents. */
+const TOOL_LINE =
+  "\n\n(To sort the user's skills into categories or change their skill sets (Agents), use the " +
+  'mcp__skill-loadout__loadout tool: "list" first, then "save"; the user confirms the changes on a card.)'
 
 const NAMES = [
   'image-prompt',
@@ -110,6 +121,8 @@ type Spawned = { prompt: string; description: string; agentId: string }
 type Fake = {
   store: Map<string, unknown>
   files: Map<string, string>
+  /** How many times each file was written. */
+  writes: Map<string, number>
   asked: Asked[]
   toasts: string[]
   spawned: Spawned[]
@@ -145,6 +158,8 @@ function engine(
     files?: Record<string, string>
     agents?: Listed[]
     hold?: boolean
+    /** A file whose first write lands torn. */
+    tear?: string
     /** Runs an Agent tool call, as core starts its subagent. */
     onAgent?: (call: AgentCall) => Promise<void>
     /** Runs as each card shows, before it is answered: another tool may change the files meanwhile. */
@@ -161,6 +176,7 @@ function engine(
   const language = options.language === undefined ? 'zh' : options.language
   if (language !== null) store.set('language', language)
   const files = new Map<string, string>(Object.entries(options.files ?? {}))
+  const writes = new Map<string, number>()
   const answers = [...(options.answers ?? [])]
   const asked: Asked[] = []
   const toasts: string[] = []
@@ -190,7 +206,11 @@ function engine(
   on('fs.exists', (_, e) => ({ value: files.has(pathOf(e.path)) }))
   on('fs.read', (_, e) => ({ value: files.get(pathOf(e.path)) ?? '' }))
   on('fs.write', (_, e) => {
-    files.set(pathOf(e.path), e.text)
+    const path = pathOf(e.path)
+    const count = (writes.get(path) ?? 0) + 1
+    writes.set(path, count)
+    // `tear`: the first write of that file lands torn, a run of zero bytes inside, as when two sessions write it at once.
+    files.set(path, options.tear === path && count === 1 ? `${e.text.slice(0, 40)}${'\u0000'.repeat(20)}${e.text.slice(60)}` : e.text)
     return { value: undefined }
   })
   on('ui.invalidate', () => ({ value: undefined }))
@@ -232,7 +252,7 @@ function engine(
   })
   on('prompt.submit', (_, e) => ({ text: e.text }))
 
-  return { store, files, asked, toasts, spawned, opens: () => opens, arrived: () => arrived, release: () => release() }
+  return { store, files, writes, asked, toasts, spawned, opens: () => opens, arrived: () => arrived, release: () => release() }
 }
 
 /** The model's Agent tool call (or a fork), as the engine raises its spawn. */
@@ -378,7 +398,7 @@ test('every skill ticked one by one reads as 不限制', async ($, on) => {
 test('before the first turn a group can be turned off, and kept as an Agent', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
-  expect(await listing($)).toBe(LISTING)
+  expect(await listing($)).toBe(LISTING + TOOL_LINE)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /已装配/ }))?.text).toContain('已装配 6 / 6')
@@ -520,7 +540,7 @@ test('a dismissed card lets the message through with what the session has', asyn
   expect(fake.asked.length).toBe(1)
 })
 
-test('the folder’s last Agent comes first; many Agents come two at a time; a typed name works', async ($, on) => {
+test('the folder’s last Agent comes first; many choices come three at a time; a typed name works', async ($, on) => {
   const agents = Object.fromEntries(
     ['甲', '乙', '丙', '丁', 'Coding'].map(name => [name, { groups: [], skills: ['code-review'] }]),
   )
@@ -533,15 +553,53 @@ test('the folder’s last Agent comes first; many Agents come two at a time; a t
   await say($, '写代码')
 
   expect(fake.asked.map(one => one.options.map(option => option.label))).toEqual([
-    ['丙', '甲', '更多 Agent…', '不限制'],
-    ['乙', '丁', '更多 Agent…', '不限制'],
-    ['乙', '丁', '更多 Agent…', '不限制'],
+    ['丙', '甲', '乙', '更多 Agent…'],
+    ['丁', 'Coding', '不限制', '更多 Agent…'],
+    ['丁', 'Coding', '不限制', '更多 Agent…'],
   ])
   expect(fake.asked[0]?.options[0]?.description).toContain('上次在这个文件夹用的')
+  // 「更多」 says what the next page holds, and the last page's goes back to the first.
+  expect(fake.asked[0]?.options[3]?.description).toBe('下一批：丁、Coding、不限制 · 也可以在 Other 里直接输入名字')
+  expect(fake.asked[1]?.options[3]?.description).toBe('回到第一批：丙、甲、乙 · 也可以在 Other 里直接输入名字')
   expect(fake.asked[2]?.question).toBe('「不存在」不是现成的 Agent，卡片上只能选一个。这个会话用哪套技能？')
   const text = await listing($)
   expect(text).toContain('- code-review:')
   expect(text.includes('- image-prompt:')).toBe(false)
+})
+
+test('the card offers what this folder used last, then what recent conversations used most; 不限制 is ranked too', async ($, on) => {
+  const agents = Object.fromEntries(['甲', '乙', '丙', '丁', 'Coding'].map(name => [name, { groups: [], skills: ['code-review'] }]))
+  const fake = engine(on, { answers: ['更多 Agent…', '甲'], files: { [LIBRARY_PATH]: JSON.stringify({ groups: {}, agents }) } })
+  // Recent conversations: Coding twice, every skill once, and 丁 once, the newest.
+  fake.store.set('locks', {
+    a: { allow: ['code-review'], agent: 'Coding', label: 'Coding', at: 10 },
+    b: { allow: null, agent: null, label: '不限制', at: 20 },
+    c: { allow: ['code-review'], agent: 'Coding', label: 'Coding', at: 30 },
+    d: { allow: ['code-review'], agent: '丁', label: '丁', at: 40 },
+  })
+  // This folder's last conversation used every skill.
+  fake.store.set('byFolder', { '/work': { preset: null, allow: null } })
+  await start($)
+  await say($, '写代码')
+
+  expect(fake.asked.map(one => one.options.map(option => option.label))).toEqual([
+    ['不限制', 'Coding', '丁', '更多 Agent…'],
+    ['甲', '乙', '丙', '更多 Agent…'],
+  ])
+  expect(fake.asked[0]?.options[0]?.description).toContain('上次在这个文件夹用的')
+  expect(fake.asked[0]?.options[3]?.description).toBe('下一批：甲、乙、丙 · 也可以在 Other 里直接输入名字')
+  expect((fake.store.get('byFolder') as Record<string, { preset: string | null }>)['/work']?.preset).toBe('甲')
+})
+
+test('a card holds four options: all of them when they fit, else three and 更多; ranks keep ties in order', () => {
+  expect(askPage(['a', 'b', 'c', 'd'], 0).options).toEqual(['a', 'b', 'c', 'd'])
+  expect(askPage(['a', 'b', 'c', 'd', 'e'], 0)).toEqual({ options: ['a', 'b', 'c', '更多 Agent…'], next: 3 })
+  expect(askPage(['a', 'b', 'c', 'd', 'e'], 3)).toEqual({ options: ['d', 'e', '更多 Agent…'], next: 0 })
+  expect(askPage(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 6)).toEqual({ options: ['g', '更多 Agent…'], next: 0 })
+  expect(rankChoices(['a', 'b', 'c'], [], null)).toEqual(['a', 'b', 'c'])
+  expect(rankChoices(['a', 'b', 'c'], ['c', 'b', 'c'], null)).toEqual(['c', 'b', 'a'])
+  expect(rankChoices(['a', 'b', 'c'], ['b', 'c'], 'a')).toEqual(['a', 'b', 'c'])
+  expect(rankChoices(['a', 'b'], ['gone', 'gone'], 'gone')).toEqual(['a', 'b'])
 })
 
 test('a session moved after it started remembers the folder it works in, by its repository', async ($, on) => {
@@ -621,6 +679,20 @@ test('the skills Claude Code has are written for other tools', async ($, on) => 
   expect(Array.isArray(seen['alwaysOn'])).toBe(true)
   const names = (seen['skills'] as { name: string; lastSeen: number }[]).map(skill => skill.name)
   expect(names).toEqual([...NAMES].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+})
+
+test('the skill list file is written whole: a torn write is written again, and the same list is not written twice', async ($, on) => {
+  const fake = engine(on, { tear: CATALOG_PATH })
+  await start($)
+  // The first write landed torn; the plugin read it back and wrote it again.
+  expect(fake.writes.get(CATALOG_PATH)).toBe(2)
+  expect((fileOf(fake, CATALOG_PATH)['skills'] as unknown[]).length).toBe(NAMES.length)
+  // Another session starting with the same skills leaves the file alone.
+  await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+  expect(fake.writes.get(CATALOG_PATH)).toBe(2)
+  expect((fake.store.get('diag') as { catalogFile?: string }).catalogFile).toBe(`${NAMES.length} skills, unchanged`)
+  expect(sameCatalog({ alwaysOn: ['a'], skills: [{ name: 'x', lastSeen: 1 }] }, ['a'], [{ name: 'x' }])).toBe(true)
+  expect(sameCatalog({ alwaysOn: ['a'], skills: [{ name: 'x', description: 'old' }] }, ['a'], [{ name: 'x', description: 'new' }])).toBe(false)
 })
 
 test('library.json keeps its language and the fields other tools add, and they cannot override its own', () => {
@@ -994,9 +1066,9 @@ test('when the person picks, a card asks for each subagent, the main agent’s s
   await spawn($, { prompt: '找参考图\n技能装配：只要图片', description: '找参考图', subagentType: 'general-purpose' })
 
   expect(fake.asked[1]?.question).toBe('子代理「找参考图」用哪套技能？')
-  expect(fake.asked[1]?.options.map(option => option.label)).toEqual(['只要图片', '设计', '不限制', '和主会话一样'])
-  expect(fake.asked[1]?.options[0]?.description).toContain('主代理建议')
-  expect(fake.asked[1]?.options[3]?.description).toBe('沿用「设计」')
+  expect(fake.asked[1]?.options.map(option => option.label)).toEqual(['和主会话一样', '只要图片', '设计', '不限制'])
+  expect(fake.asked[1]?.options[1]?.description).toContain('主代理建议')
+  expect(fake.asked[1]?.options[0]?.description).toBe('沿用「设计」')
   expect((await listingOf($, 'A1')).includes('figma:figma-use')).toBe(false)
   // A fork is never asked about.
   await spawn($, { prompt: '换个思路', description: '分叉', subagentType: 'fork' })
@@ -1119,4 +1191,142 @@ test('a set the person names for the work goes to a subagent started with no lin
   expect(own).toContain('- image-prompt:')
   expect(own.includes('figma:figma-use')).toBe(false)
   expect(result.context?.join('\n')).toContain('skill set "只要图片" (1 skill), as the user chose')
+})
+
+// The loadout tool: Claude reads every skill, and saves categories and Agents once the person confirms.
+
+/** The loadout tool, as the model calls it. */
+async function loadout($: Parameters<Body>[0], input: Record<string, unknown>): Promise<{ text?: string; deny?: string }> {
+  return $.tool.call({ tool: 'mcp__skill-loadout__loadout', ...input } as never) as Promise<{ text?: string; deny?: string }>
+}
+
+test('"list" gives each skill its groups, Agents and what it does; the categories and Agents follow', async ($, on) => {
+  engine(on, { files: { [LIBRARY_PATH]: JSON.stringify(LIBRARY) } })
+  await start($)
+  const report = JSON.parse((await loadout($, { action: 'list' })).text ?? '{}') as {
+    howItWorks: string
+    skills: Record<string, { in: string[]; agents?: string[]; about?: string }>
+    groups: Record<string, { kind: string; skills: number }>
+    categories: Record<string, string[]>
+    agents: Record<string, { groups: string[]; skills: string[]; loads: number }>
+  }
+
+  expect(report.howItWorks).toContain('confirms the exact changes on a card')
+  expect(report.skills['image-prompt']).toEqual({ in: ['g:图'], agents: ['只要图片'], about: '把画面想法转成摄影提示词。' })
+  expect(report.skills['remotion-render']?.in).toEqual(['u:'])
+  expect(report.skills['figma:figma-use']).toEqual({ in: ['p:figma'], agents: ['设计'] })
+  expect(report.groups['g:图']).toEqual({ kind: 'category', skills: 1 })
+  expect(report.groups['u:']?.kind).toBe('in no category')
+  expect(report.groups['p:figma']?.kind).toBe('plugin')
+  expect(report.categories).toEqual({ 图: ['image-*'] })
+  expect(report.agents['只要图片']).toEqual({ groups: ['g:图'], skills: [], loads: 1 })
+})
+
+test('"save" shows its changes on a card and writes them once the person says yes; "undo" puts them back', async ($, on) => {
+  const fake = engine(on, { answers: ['保存', '撤销'], files: { [LIBRARY_PATH]: JSON.stringify(LIBRARY) } })
+  fake.store.set('byFolder', { '/work': { preset: '只要图片', allow: ['image-prompt'] } })
+  await start($)
+  const saved = await loadout($, {
+    action: 'save',
+    rename: { agents: { 只要图片: '出图' } },
+    categories: { 视频: ['remotion-render'], 图: ['image-*', 'remotion-render'] },
+    agents: { 剪辑: { groups: ['g:视频'], skills: ['code-review'] } },
+  })
+
+  expect(fake.asked[0]?.question).toBe(
+    [
+      '保存这些改动吗？',
+      '· Agent「只要图片」改名「出图」',
+      '· 新建分类「视频」，1 个 skill',
+      '· 分类「图」加上 remotion-render，共 2 个',
+      '· Agent「出图」加上 remotion-render，共 2 个，因为它整组勾了改过的分类',
+      '· 新建 Agent「剪辑」，2 个 skill',
+    ].join('\n'),
+  )
+  expect(fake.asked[0]?.options.map(option => option.label)).toEqual(['保存', '不保存'])
+  expect(fake.asked[0]?.options[0]?.description).toContain('写进 library.json')
+  expect(saved.text).toContain('Agent "剪辑" made, loading 2 skills')
+  expect(saved.text).toContain('Agent "出图" gains remotion-render (now 2, through a category it takes whole)')
+  const file = fileOf(fake, LIBRARY_PATH)
+  expect(file['groups']).toEqual({ 图: ['image-*', 'remotion-render'], 视频: ['remotion-render'] })
+  expect(Object.keys(file['agents'] as object)).toEqual(['出图', '设计', '剪辑'])
+  // The card's memory follows the rename.
+  expect((fake.store.get('byFolder') as Record<string, { preset: string }>)['/work']?.preset).toBe('出图')
+
+  const undone = await loadout($, { action: 'undo' })
+  expect(fake.asked[1]?.question).toBe('撤销 Claude 上次（0 分钟前）对分类和 Agent 的改动吗？')
+  expect(undone.text).toContain('Undone')
+  expect(fileOf(fake, LIBRARY_PATH)['groups']).toEqual(LIBRARY.groups)
+  expect(fileOf(fake, LIBRARY_PATH)['agents']).toEqual(LIBRARY.agents)
+  expect((fake.store.get('byFolder') as Record<string, { preset: string }>)['/work']?.preset).toBe('只要图片')
+  expect((await loadout($, { action: 'undo' })).text).toContain('Nothing to undo')
+})
+
+test('"save" refuses all of it when one part is wrong, and writes nothing the person says no to', async ($, on) => {
+  const fake = engine(on, { answers: ['不保存', '先别动 Coding'], files: { [LIBRARY_PATH]: JSON.stringify(LIBRARY) } })
+  await start($)
+  const before = fake.files.get(LIBRARY_PATH)
+
+  const wrong = await loadout($, {
+    action: 'save',
+    categories: { 设计类: ['figma:figma-use'], 图: ['image-prompt', 'no-such-skill'] },
+    agents: { 不限制: { skills: ['code-review'] }, 空的: { groups: [], skills: [] }, 乱的: { groups: ['u:', 'p:nope'] } },
+  })
+  expect(fake.asked.length).toBe(0)
+  expect(wrong.deny).toContain('"figma:figma-use" came with a plugin; only skills installed on their own go in categories')
+  expect(wrong.deny).toContain('"no-such-skill" is not an installed skill')
+  expect(wrong.deny).toContain('"不限制" means something else on the card')
+  expect(wrong.deny).toContain('Agent "空的": it would load no skill')
+  expect(wrong.deny).toContain('"u:" can\'t be taken whole')
+  expect(wrong.deny).toContain('"p:nope" is not a group')
+
+  const declined = await loadout($, { action: 'save', categories: { 视频: ['remotion-render'] } })
+  expect(declined.deny).toBe('Nothing was saved: the user said no on the confirmation card.')
+  const typed = await loadout($, { action: 'save', agents: { Coding: { skills: ['code-review'] } } })
+  expect(typed.deny).toBe('Nothing was saved: the user said no on the confirmation card and wrote: "先别动 Coding".')
+  // A card nobody answers saves nothing either.
+  expect((await loadout($, { action: 'save', categories: { 视频: ['remotion-render'] } })).deny).toContain('card was closed')
+  expect(fake.files.get(LIBRARY_PATH)).toBe(before)
+})
+
+test('changes keep what a category or an Agent already had, and say which Agents a category change reaches', () => {
+  const library = { groups: { 图: ['image-*', 'old-skill'] }, presets: { 图片: { groups: ['g:图', 'p:gone'], skills: ['gone-skill'] } } }
+  // Names no longer installed stay where they were; only new ones must answer to an installed skill.
+  const kept = applyChanges(library, { categories: { 图: ['image-*', 'old-skill', 'mine'] }, agents: { 图片: { groups: ['g:图', 'p:gone'], skills: ['gone-skill'] } } }, CATALOG)
+  expect(kept.problems).toEqual([])
+  expect(kept.changes.map(changeForModel)).toEqual([
+    'category "图" gains mine (now 2)',
+    'Agent "图片" gains mine (now 2, through a category it takes whole)',
+  ])
+  // A deleted category's skills stay in the Agents that took it, one by one.
+  const deleted = applyChanges(library, { categories: { 图: null } }, CATALOG)
+  expect(deleted.library.presets['图片']).toEqual({ groups: ['p:gone'], skills: ['gone-skill', 'image-prompt'] })
+  expect(deleted.changes.map(changeForModel)).toEqual(['category "图" deleted (图片 keep its skills one by one)'])
+  // A rename keeps the category in its Agents.
+  const renamed = applyChanges(library, { rename: { categories: { 图: '图像' } } }, CATALOG)
+  expect(renamed.library.presets['图片']?.groups).toEqual(['g:图像', 'p:gone'])
+  expect(applyChanges(library, { rename: { categories: { 图: 'p:x' } } }, CATALOG).problems).toEqual([
+    'Category "图" can\'t be renamed: "p:x" starts like a group id.',
+  ])
+})
+
+test("an Agent's skills Claude Code doesn't have (Codex's) stay in it when the tool saves it", () => {
+  const library = { groups: {}, presets: { 视频制作: { groups: ['p:documents', 'g:图'], skills: ['pr-triage', 'image-prompt'] } } }
+  const saved = applyChanges(library, { agents: { 视频制作: { groups: [], skills: ['image-prompt', 'code-review'] } } }, CATALOG)
+  expect(saved.problems).toEqual([])
+  expect(saved.library.presets['视频制作']).toEqual({
+    groups: ['p:documents', 'g:图'],
+    skills: ['image-prompt', 'code-review', 'pr-triage'],
+  })
+})
+
+test('a name with a line break or another control character in it is refused, and a typed one loses them', () => {
+  const wrong = applyChanges(
+    { groups: {}, presets: {} },
+    { agents: { 'x\n[model_providers.evil]': { skills: ['code-review'] } }, categories: { 'a\rb': ['image-prompt'] } },
+    CATALOG,
+  )
+  expect(wrong.problems).toHaveLength(2)
+  expect(wrong.problems.every(problem => problem.includes('line break'))).toBe(true)
+  expect(plainName('  视频\n制作\t ')).toBe('视频制作')
 })

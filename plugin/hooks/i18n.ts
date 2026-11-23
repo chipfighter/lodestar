@@ -1,6 +1,8 @@
 // What the plugin says to the person, in Chinese and in English. What only the
 // model reads (a refused skill, a subagent's note) stays in English.
 
+import type { LibraryChange } from './listing'
+
 export type Lang = 'zh' | 'en'
 
 /** How a subagent's skills were settled. */
@@ -34,7 +36,8 @@ export type Words = {
     notAnAgent: (name: string) => string
     allSkills: (count: number) => string
     allSkillsUnknown: string
-    nextPage: (agents: number) => string
+    /** Under 「更多 Agent…」: what the next page holds, or (`isBack`) the first page it goes back to. */
+    nextPage: (names: readonly string[], isBack: boolean) => string
     lastHere: string
     skills: (count: number) => string
     basedOn: (name: string, added: number, removed: number) => string
@@ -79,6 +82,21 @@ export type Words = {
 
   band: { locked: string; asking: string; willAsk: string; canChange: string; open: string }
 
+  /** The card that asks before Claude's changes to the categories and Agents are written, or undone. */
+  confirm: {
+    change: (change: LibraryChange) => string
+    question: (lines: readonly string[], more: number) => string
+    save: string
+    saveNote: string
+    cancel: string
+    cancelNote: string
+    undoQuestion: (minutes: number, isChangedSince: boolean) => string
+    undo: string
+    undoNote: string
+    keep: string
+    keepNote: string
+  }
+
   pane: {
     alwaysOn: string
     back: string
@@ -107,6 +125,7 @@ export type Words = {
     deleteGroupConfirm: string
     manage: string
     lockedNote: string
+    askClaude: string
     agents: string
     agentsHint: string
     noAgents: string
@@ -178,6 +197,15 @@ export type Words = {
   }
 }
 
+/** Up to three names, or three and how many in all. */
+function zhNames(names: readonly string[]): string {
+  return names.length <= 3 ? names.join('、') : `${names.slice(0, 3).join('、')} 等 ${names.length} 个`
+}
+
+function enNames(names: readonly string[]): string {
+  return names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`
+}
+
 const zh: Words = {
   title: 'Lodestar',
   cardHeader: 'Lodestar',
@@ -202,7 +230,7 @@ const zh: Words = {
     notAnAgent: name => `「${name}」不是现成的 Agent，卡片上只能选一个。`,
     allSkills: count => `装全部 ${count} 个 skill`,
     allSkillsUnknown: '装全部 skill',
-    nextPage: agents => `换下一批，一共 ${agents} 个 Agent`,
+    nextPage: (names, isBack) => `${isBack ? '回到第一批' : '下一批'}：${names.join('、')} · 也可以在 Other 里直接输入名字`,
     lastHere: '上次在这个文件夹用的',
     skills: count => `${count} 个 skill`,
     basedOn: (name, added, removed) =>
@@ -249,6 +277,48 @@ const zh: Words = {
 
   band: { locked: '已锁定', asking: '正在问你用哪套', willAsk: '发第一条消息时会问你', canChange: '发第一条消息前可改', open: '打开面板' },
 
+  confirm: {
+    change: change => {
+      switch (change.kind) {
+        case 'categoryRenamed':
+          return `分类「${change.from}」改名「${change.to}」`
+        case 'agentRenamed':
+          return `Agent「${change.from}」改名「${change.to}」`
+        case 'categoryMade':
+          return `新建分类「${change.name}」，${change.count} 个 skill`
+        case 'agentMade':
+          return `新建 Agent「${change.name}」，${change.count} 个 skill`
+        case 'categoryDeleted':
+          return `删掉分类「${change.name}」${change.keptBy.length > 0 ? `（${change.keptBy.join('、')} 照样带着它的 skill）` : ''}`
+        case 'agentDeleted':
+          return `删掉 Agent「${change.name}」`
+        default: {
+          const what = change.kind === 'categoryChanged' ? '分类' : 'Agent'
+          const parts = [
+            ...(change.added.length > 0 ? [`加上 ${zhNames(change.added)}`] : []),
+            ...(change.removed.length > 0 ? [`拿掉 ${zhNames(change.removed)}`] : []),
+          ]
+          const via = change.viaCategories === true ? '，因为它整组勾了改过的分类' : ''
+          return `${what}「${change.name}」${parts.join('，')}，共 ${change.count} 个${via}`
+        }
+      }
+    },
+    question: (lines, more) =>
+      `保存这些改动吗？${lines.map(line => `
+· ${line}`).join('')}${more > 0 ? `
+· 还有 ${more} 处` : ''}`,
+    save: '保存',
+    saveNote: '写进 library.json，新会话起生效；不满意可以让 Claude 撤销',
+    cancel: '不保存',
+    cancelNote: '什么都不改',
+    undoQuestion: (minutes, isChangedSince) =>
+      `撤销 Claude 上次（${minutes} 分钟前）对分类和 Agent 的改动吗？${isChangedSince ? '那之后在面板或客户端里的修改也会一起撤掉。' : ''}`,
+    undo: '撤销',
+    undoNote: '分类和 Agent 回到那次保存之前的样子',
+    keep: '不撤销',
+    keepNote: '什么都不改',
+  },
+
   pane: {
     alwaysOn: '常驻',
     back: '← 返回',
@@ -277,6 +347,7 @@ const zh: Words = {
     deleteGroupConfirm: '确认删除这个分类？再点一次',
     manage: '管理',
     lockedNote: '这个会话已经锁定，这里的修改从下一个新会话起生效',
+    askClaude: '也可以直接跟 Claude 说，比如「帮我把 skill 分好类」「建一个做视频的 Agent」：它先说打算怎么改，你点头了再保存',
     agents: 'Agent',
     agentsHint: '一套 skill：整组勾或者只勾几个，来自哪里都行；新会话发第一条消息时选一个',
     noAgents: '还没有 Agent',
@@ -374,7 +445,7 @@ const en: Words = {
     notAnAgent: name => `"${name}" isn't one of your Agents; the card can only pick one. `,
     allSkills: count => `Every skill (${count})`,
     allSkillsUnknown: 'Every skill',
-    nextPage: agents => `Next page, ${plural(agents, 'Agent', 'Agents')} in all`,
+    nextPage: (names, isBack) => `${isBack ? 'Back to' : 'Next'}: ${names.join(', ')} · or type a name under Other`,
     lastHere: 'Used last in this folder',
     skills: count => plural(count, 'skill', 'skills'),
     basedOn: (name, added, removed) =>
@@ -421,6 +492,48 @@ const en: Words = {
 
   band: { locked: 'locked', asking: 'asking you now', willAsk: 'asks at the first message', canChange: 'can change before the first message', open: 'Open panel' },
 
+  confirm: {
+    change: change => {
+      switch (change.kind) {
+        case 'categoryRenamed':
+          return `Category "${change.from}" renamed "${change.to}"`
+        case 'agentRenamed':
+          return `Agent "${change.from}" renamed "${change.to}"`
+        case 'categoryMade':
+          return `New category "${change.name}", ${plural(change.count, 'skill', 'skills')}`
+        case 'agentMade':
+          return `New Agent "${change.name}", ${plural(change.count, 'skill', 'skills')}`
+        case 'categoryDeleted':
+          return `Category "${change.name}" deleted${change.keptBy.length > 0 ? ` (${change.keptBy.join(', ')} keep its skills)` : ''}`
+        case 'agentDeleted':
+          return `Agent "${change.name}" deleted`
+        default: {
+          const what = change.kind === 'categoryChanged' ? 'Category' : 'Agent'
+          const parts = [
+            ...(change.added.length > 0 ? [`gains ${enNames(change.added)}`] : []),
+            ...(change.removed.length > 0 ? [`loses ${enNames(change.removed)}`] : []),
+          ]
+          const via = change.viaCategories === true ? ', through a category it takes whole' : ''
+          return `${what} "${change.name}" ${parts.join(' and ')}, ${change.count} in all${via}`
+        }
+      }
+    },
+    question: (lines, more) =>
+      `Save these changes?${lines.map(line => `
+· ${line}`).join('')}${more > 0 ? `
+· ${more} more` : ''}`,
+    save: 'Save',
+    saveNote: 'Written to library.json for new sessions; Claude can undo it',
+    cancel: "Don't save",
+    cancelNote: 'Nothing changes',
+    undoQuestion: (minutes, isChangedSince) =>
+      `Undo Claude's last change to your categories and Agents (${minutes} min ago)?${isChangedSince ? ' Changes made since, in the panel or the client, go with it.' : ''}`,
+    undo: 'Undo',
+    undoNote: 'Categories and Agents go back to how they were before that save',
+    keep: 'Keep it',
+    keepNote: 'Nothing changes',
+  },
+
   pane: {
     alwaysOn: 'always on',
     back: '← Back',
@@ -449,6 +562,7 @@ const en: Words = {
     deleteGroupConfirm: 'Delete this category? Press again',
     manage: 'Manage',
     lockedNote: 'This session is locked; changes here apply from the next new session',
+    askClaude: 'Or just ask Claude, say "sort my skills into categories" or "make an Agent for video work": it tells you the plan, and saves once you agree',
     agents: 'Agents',
     agentsHint: "A set of skills: whole groups or just a few, from anywhere; picked at a new session's first message",
     noAgents: 'No Agents yet',

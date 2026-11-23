@@ -32,15 +32,17 @@ import {
 } from '@fluentui/react-components'
 import {
   Add20Regular,
+  CheckmarkCircle20Filled,
   Copy20Regular,
   Delete20Regular,
   Info16Regular,
   MoreHorizontal20Regular,
+  Play20Regular,
   Rocket20Regular,
   Save20Regular,
 } from '@fluentui/react-icons'
 
-import { MAX_NAME, RESERVED_NAMES } from '@shared/listing'
+import { MAX_NAME, RESERVED_NAMES, keepUnseen, plainName } from '@shared/listing'
 import type { Preset } from '../../../plugin/types'
 import {
   changesFrom,
@@ -56,6 +58,7 @@ import {
 import { NameTakenError, type Actions, type DataState } from '../data/useData'
 import { timeLeft, useStrings } from '../i18n'
 import { PageHeader, useNotify } from '../ui/common'
+import { usePlatform } from '../ui/platform'
 import { SkillPicker } from '../ui/SkillPicker'
 
 type Draft = {
@@ -65,11 +68,13 @@ type Draft = {
   selected: Set<string>
   /** The skills as saved, which an edit is told apart from. */
   base: Set<string>
+  /** The Agent it came from, whose skills this platform doesn't have stay in it when it is saved. */
+  source?: Preset
 }
 
 function draftOf(model: Model, name: string, preset: Preset): Draft {
   const selected = presetSkills(model, preset)
-  return { original: name, name, selected, base: new Set(selected) }
+  return { original: name, name, selected, base: new Set(selected), source: preset }
 }
 
 /** What a discard would throw away, and what to do after. */
@@ -153,10 +158,12 @@ const useStyles = makeStyles({
   stats: { display: 'flex', alignItems: 'center', gap: '8px', color: tokens.colorNeutralForeground2 },
   actions: { display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' },
   placeholder: { margin: 'auto', color: tokens.colorNeutralForeground3, padding: '24px', textAlign: 'center' },
+  itemTop: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 },
+  inUse: { color: tokens.colorPaletteGreenForeground1 },
 })
 
 function cleanName(raw: string): string {
-  return raw.trim().slice(0, MAX_NAME)
+  return plainName(raw)
 }
 
 export function AgentsPage({ state, actions, model }: { state: DataState; actions: Actions; model: Model }) {
@@ -164,8 +171,11 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
   const strings = useStrings()
   const t = strings.agents
   const notify = useNotify()
+  const platform = usePlatform()
   const presets = state.value.library.presets
   const names = Object.keys(presets)
+  const codexAgent = state.codex.record?.agent ?? null
+  const [isApplying, setIsApplying] = useState(false)
 
   const [draft, setDraft] = useState<Draft | null>(() => {
     const first = names[0]
@@ -189,10 +199,18 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
       const isUntouched = sameSet(old.selected, old.base)
       if (preset === undefined) return isUntouched ? null : { ...old, original: null }
       const base = presetSkills(model, preset)
-      if (sameSet(base, old.base)) return old
-      return isUntouched ? { ...old, selected: base, base } : { ...old, base }
+      if (sameSet(base, old.base)) return { ...old, source: preset }
+      return isUntouched ? { ...old, selected: base, base, source: preset } : { ...old, base, source: preset }
     })
   }, [presets, model])
+
+  // Another platform has other skills: the Agent shows as saved, with that platform's.
+  const [shownFor, setShownFor] = useState(platform)
+  if (shownFor !== platform) {
+    setShownFor(platform)
+    const preset = draft?.original == null ? undefined : presets[draft.original]
+    if (draft !== null && draft.original !== null && preset !== undefined) setDraft(draftOf(model, draft.original, preset))
+  }
 
   const guard = (then: () => void): void => {
     if (isDirty) setPending({ then })
@@ -208,13 +226,14 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
     })
   }
 
-  const startNew = (from?: { name: string; selected: Set<string> }): void =>
+  const startNew = (from?: { name: string; selected: Set<string>; source?: Preset }): void =>
     guard(() => {
       setDraft({
         original: null,
         name: from === undefined ? '' : copyName(from.name, names, t.copySuffix),
         selected: new Set(from?.selected ?? []),
         base: new Set(),
+        ...(from?.source === undefined ? {} : { source: from.source }),
       })
       setNameError(undefined)
     })
@@ -235,9 +254,11 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
       return
     }
     try {
-      await actions.saveAgent(draft.original, name, selectionPreset(model, draft.selected))
+      // Agents are shared: the skills this platform doesn't have stay in the Agent as they were.
+      const preset = keepUnseen(selectionPreset(model, draft.selected), draft.source, model.groups, model.names)
+      await actions.saveAgent(draft.original, name, preset)
       notify(draft.original === null ? t.created(name) : t.saved(name))
-      setDraft({ ...draft, original: name, name, base: new Set(draft.selected) })
+      setDraft({ ...draft, original: name, name, base: new Set(draft.selected), source: preset })
       setNameError(undefined)
     } catch (error) {
       if (error instanceof NameTakenError) setNameError(t.errors.taken(name))
@@ -252,6 +273,18 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
       notify(t.prepared, 'success')
     } catch (error) {
       notify(String(error), 'error')
+    }
+  }
+
+  const useForCodex = async (name: string): Promise<void> => {
+    setIsApplying(true)
+    try {
+      const off = await actions.useForCodex(name)
+      notify(t.codexDone(name, off))
+    } catch (error) {
+      notify(strings.codex.failed(String(error instanceof Error ? error.message : error)), 'error')
+    } finally {
+      setIsApplying(false)
     }
   }
 
@@ -270,8 +303,12 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
 
   return (
     <div className={styles.page}>
-      <PageHeader title={t.title} intro={t.intro} />
-      <NextBanner state={state} actions={actions} model={model} />
+      <PageHeader title={t.title} intro={platform === 'codex' ? t.introCodex : t.intro} />
+      {platform === 'codex' ? (
+        <CodexBanner state={state} actions={actions} model={model} />
+      ) : (
+        <NextBanner state={state} actions={actions} model={model} />
+      )}
       <div className={styles.split}>
         <div className={styles.listPane}>
           <Button icon={<Add20Regular />} onClick={() => startNew()}>
@@ -294,7 +331,14 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
                     className={mergeClasses(styles.item, isSelected && styles.itemSelected)}
                     onClick={() => open(name)}
                   >
-                    <Body1Strong className={styles.itemName}>{name}</Body1Strong>
+                    <span className={styles.itemTop}>
+                      <Body1Strong className={styles.itemName}>{name}</Body1Strong>
+                      {platform === 'codex' && codexAgent === name ? (
+                        <Badge appearance="tint" color="success" size="small">
+                          {t.codexBadge}
+                        </Badge>
+                      ) : null}
+                    </span>
                     <Caption1 className={styles.itemMeta}>
                       {model.names.length > 0
                         ? `${strings.skillCount(set.size)} · ${strings.tokens(formatTokens(tokensOf(model, set)))}`
@@ -341,7 +385,13 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
                       <MenuList>
                         <MenuItem
                           icon={<Copy20Regular />}
-                          onClick={() => startNew({ name: cleanName(draft.name) || t.newName, selected: draft.selected })}
+                          onClick={() =>
+                            startNew({
+                              name: cleanName(draft.name) || t.newName,
+                              selected: draft.selected,
+                              ...(draft.source === undefined ? {} : { source: draft.source }),
+                            })
+                          }
                         >
                           {strings.duplicate}
                         </MenuItem>
@@ -377,6 +427,7 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
                   onChange={selected => setDraft({ ...draft, selected })}
                   query={query}
                   isOnlySelected={isOnlySelected}
+                  emptyText={platform === 'codex' ? (state.codex.isRefreshing ? t.readingCodex : t.noSkillsCodex) : t.noSkills}
                 />
               </div>
               <div className={styles.footer}>
@@ -390,11 +441,29 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
                   ) : null}
                 </div>
                 <div className={styles.actions}>
-                  <Tooltip content={t.prepareHint} relationship="description">
-                    <Button icon={<Rocket20Regular />} onClick={() => void prepare()} disabled={model.names.length === 0}>
-                      {t.prepare}
-                    </Button>
-                  </Tooltip>
+                  {platform === 'codex' ? (
+                    draft.original !== null && codexAgent === draft.original && !isDirty ? (
+                      <Button icon={<CheckmarkCircle20Filled className={styles.inUse} />} disabled>
+                        {t.inUseByCodex}
+                      </Button>
+                    ) : (
+                      <Tooltip content={isDirty ? t.saveFirst : t.useForCodexHint} relationship="description">
+                        <Button
+                          icon={<Play20Regular />}
+                          disabled={isDirty || draft.original === null || isApplying || model.names.length === 0}
+                          onClick={() => draft.original !== null && void useForCodex(draft.original)}
+                        >
+                          {t.useForCodex}
+                        </Button>
+                      </Tooltip>
+                    )
+                  ) : (
+                    <Tooltip content={t.prepareHint} relationship="description">
+                      <Button icon={<Rocket20Regular />} onClick={() => void prepare()} disabled={model.names.length === 0}>
+                        {t.prepare}
+                      </Button>
+                    </Tooltip>
+                  )}
                   <Button appearance="primary" icon={<Save20Regular />} onClick={() => void save()} disabled={!isDirty}>
                     {strings.save}
                   </Button>
@@ -446,6 +515,63 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
         </DialogSurface>
       </Dialog>
     </div>
+  )
+}
+
+/** What new Codex sessions load: an Agent's skills, or every skill; and what went wrong with Codex last, if anything did. */
+function CodexBanner({ state, actions, model }: { state: DataState; actions: Actions; model: Model }) {
+  const styles = useStyles()
+  const strings = useStrings()
+  const t = strings.codex
+  const notify = useNotify()
+  const [isClearing, setIsClearing] = useState(false)
+  const agent = state.codex.record?.agent ?? null
+  const preset = agent === null ? undefined : state.value.library.presets[agent]
+
+  const clear = async (): Promise<void> => {
+    setIsClearing(true)
+    try {
+      await actions.useForCodex(null)
+      notify(t.setAllDone)
+    } catch (error) {
+      notify(t.failed(String(error instanceof Error ? error.message : error)), 'error')
+    } finally {
+      setIsClearing(false)
+    }
+  }
+  const clearButton = (
+    <MessageBarActions>
+      <Button size="small" disabled={isClearing} onClick={() => void clear()}>
+        {t.setAll}
+      </Button>
+    </MessageBarActions>
+  )
+  // Skills the person switched off in Codex stay off whatever the Agent.
+  const seen = (names: Iterable<string>): number => [...names].filter(name => !model.off.has(name)).length
+
+  return (
+    <>
+      {state.codex.error === null ? null : (
+        <MessageBar className={styles.banner} intent="error" layout="multiline">
+          <MessageBarBody>{t.failed(state.codex.error)}</MessageBarBody>
+        </MessageBar>
+      )}
+      {agent === null ? (
+        <MessageBar className={styles.banner} intent="info">
+          <MessageBarBody>{t.all(seen(model.names))}</MessageBarBody>
+        </MessageBar>
+      ) : preset === undefined ? (
+        <MessageBar className={styles.banner} intent="warning">
+          <MessageBarBody>{t.gone(agent)}</MessageBarBody>
+          {clearButton}
+        </MessageBar>
+      ) : (
+        <MessageBar className={styles.banner} intent="success">
+          <MessageBarBody>{t.using(agent, seen(loadedOf(model, presetSkills(model, preset))))}</MessageBarBody>
+          {clearButton}
+        </MessageBar>
+      )}
+    </>
   )
 }
 

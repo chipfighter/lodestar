@@ -10,6 +10,10 @@ export const FILES = {
   catalog: 'claude-code-skills.json',
   next: 'next-session.json',
   client: 'client.json',
+  /** The skills Codex has, as the client last read them from Codex. */
+  codexCatalog: 'codex-skills.json',
+  /** Which Agent new Codex sessions use, and the skills Lodestar switched off in Codex's config.toml for it. */
+  codex: 'codex.json',
 } as const
 
 export type FileName = (typeof FILES)[keyof typeof FILES]
@@ -129,4 +133,42 @@ export function nextFileText(basedOn: string | null, groups: readonly string[], 
   const file = { version: 1, basedOn, groups, skills, createdAt: new Date(now).toISOString(), usedBy: null }
 
   return `${JSON.stringify(file, null, 2)}\n`
+}
+
+/** codex.json: the Agent Lodestar last set for new Codex sessions (null: every skill), and what it switched off for it. */
+export type CodexRecord = { agent: string | null; names: string[]; appliedAt: number | null; config: string | null }
+
+/** Reads codex.json's text; null when Lodestar has never changed Codex. */
+export function parseCodexRecord(text: string | null): CodexRecord | null {
+  if (text === null) return null
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const file = raw as Record<string, unknown>
+
+  return {
+    agent: typeof file.agent === 'string' && file.agent !== '' ? file.agent : null,
+    names: strings(file.names),
+    appliedAt: typeof file.appliedAt === 'number' ? file.appliedAt : null,
+    config: typeof file.config === 'string' ? file.config : null,
+  }
+}
+
+/** The skills codex-skills.json says are switched off in Codex as it was last read. */
+export function parseCodexOff(text: string | null): string[] {
+  if (text === null) return []
+  try {
+    const file = JSON.parse(text) as { skills?: unknown }
+    if (!Array.isArray(file.skills)) return []
+    return (file.skills as unknown[]).flatMap(one => {
+      const entry = one as Record<string, unknown> | null
+      return entry !== null && typeof entry === 'object' && entry.enabled === false && typeof entry.name === 'string' ? [entry.name] : []
+    })
+  } catch {
+    return []
+  }
 }

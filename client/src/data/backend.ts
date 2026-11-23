@@ -1,8 +1,9 @@
 // Where the client's files live: the data folder through the Tauri shell, or,
 // in a plain browser (`pnpm dev` without Tauri), sample files kept in memory.
 
+import type { CodexApplied, CodexInfo, CodexListed } from './codex'
 import { FILES, type FileName } from './files'
-import { sampleFiles } from './sample'
+import { SAMPLE_CODEX_INFO, sampleCodexSkills, sampleFiles } from './sample'
 
 export type Backend = {
   /** Sample data in memory, not the person's files. */
@@ -24,6 +25,16 @@ export type Backend = {
   ready(): Promise<void>
   /** The window's title and the tray menu's rows, in the language shown. */
   setLabels(title: string, open: string, quit: string): Promise<void>
+  codex: {
+    /** Where Codex is; null where it isn't installed. */
+    info(): Promise<CodexInfo | null>
+    /** Every skill Codex has, as Codex lists them. */
+    skills(): Promise<{ skills: CodexListed[]; errors: unknown[] }>
+    /** Switches `names` off for new Codex sessions, for the Agent `agent` (null: every skill), and notes it in codex.json. */
+    apply(agent: string | null, names: readonly string[]): Promise<CodexApplied>
+    /** Opens Codex's folder in Explorer. */
+    openDir(): Promise<void>
+  }
 }
 
 const NAMES = new Set<string>(Object.values(FILES))
@@ -58,12 +69,18 @@ async function tauriBackend(): Promise<Backend> {
     },
     ready: () => invoke<void>('show_main'),
     setLabels: (title, open, quit) => invoke<void>('set_labels', { title, open, quit }),
+    codex: {
+      info: () => invoke<CodexInfo | null>('codex_info'),
+      skills: () => invoke<{ skills: CodexListed[]; errors: unknown[] }>('codex_skills'),
+      apply: (agent, names) => invoke<CodexApplied>('codex_apply', { agent, names }),
+      openDir: () => invoke<void>('open_codex_dir'),
+    },
   }
 }
 
 function memoryBackend(): Backend {
   const isPrepared = new URLSearchParams(window.location.search).has('prepared')
-  const files = new Map<FileName, string>(Object.entries(sampleFiles(Date.now(), isPrepared)) as [FileName, string][])
+  const files = new Map<FileName, string>(Object.entries(sampleFiles(Date.now(), isPrepared, navigator.language)) as [FileName, string][])
   const listeners = new Set<(name: FileName) => void>()
   let isAutostart = false
 
@@ -93,6 +110,22 @@ function memoryBackend(): Backend {
     },
     ready: async () => undefined,
     setLabels: async () => undefined,
+    // Codex as a person who has it might: its skills, and a config.toml kept only as codex.json says.
+    // `?nocodex` previews the client where Codex isn't installed.
+    codex: {
+      info: async () => (new URLSearchParams(window.location.search).has('nocodex') ? null : SAMPLE_CODEX_INFO),
+      skills: async () => {
+        const off = new Set<string>(JSON.parse(files.get(FILES.codex) ?? '{}').names ?? [])
+        return { skills: sampleCodexSkills().map(skill => (off.has(skill.name) ? { ...skill, enabled: false } : skill)), errors: [] }
+      },
+      apply: async (agent, names) => {
+        const before: string[] = JSON.parse(files.get(FILES.codex) ?? '{}').names ?? []
+        const record = { version: 1, agent, names, appliedAt: Date.now(), config: SAMPLE_CODEX_INFO.config }
+        files.set(FILES.codex, `${JSON.stringify(record, null, 2)}\n`)
+        return { switchedOff: names.length, removed: before.length, config: SAMPLE_CODEX_INFO.config, backup: null }
+      },
+      openDir: async () => undefined,
+    },
   }
 }
 

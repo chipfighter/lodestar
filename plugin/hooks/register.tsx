@@ -27,9 +27,11 @@ import {
   MAX_NAME,
   MORE_LABELS,
   RESERVED_NAMES,
-  agentOrder,
+  UNLIMITED,
   agentSummary,
   answerAgent,
+  applyChanges,
+  changeForModel,
   askPage,
   deleteGroup,
   describeSelection,
@@ -40,17 +42,22 @@ import {
   hiddenNote,
   isClientWord,
   isLoose,
+  keepUnseen,
   libraryFileText,
+  libraryReport,
   listingDescriptions,
   listingNames,
   loadoutNote,
   markerName,
   matchesAny,
   mergeSeen,
+  sameCatalog,
   setMember,
   normalizeConfig,
   pickOption,
+  plainName,
   promptMark,
+  rankChoices,
   readLibraryFile,
   readNextSession,
   renameGroup,
@@ -136,8 +143,8 @@ type CardRound = {
   question: string
   /** Put before the question, unless the card already leads with why it asks again. */
   hint?: string
+  /** Every option in the order the card offers them; a page holds four, or three beside 「更多 Agent…」. */
   pool: readonly string[]
-  fixed: readonly string[]
   agents: readonly string[]
   notes: Record<string, string>
   /** The main conversation's card, which marks the Agent last used in this folder. */
@@ -151,23 +158,79 @@ type Held = { allow: string[] | null; label: string }
  * question as asked: what 「和主会话一样」 keeps, which option the main agent
  * suggested, what the client prepared; and whether it is the main card.
  */
-const cardNotes = new Map<string, Pick<CardRound, 'notes' | 'isMain'>>()
+const cardNotes = new Map<string, Pick<CardRound, 'notes' | 'isMain'> & { isPlain?: boolean }>()
 
 /** The sets spawns settled, by the Agent call that asked for each, until that call's result goes back. */
 const spawnedSets = new Map<string, SubLoadout>()
 
+const TEXT_LIST = { type: 'array', items: { type: 'string' } }
+
 const LOADOUT_TOOL = {
   name: 'loadout',
   description:
-    'Lodestar (skill loadout): action "status" returns the skills this session loads (the person picks an Agent when the ' +
-    "conversation's first message is sent; locked after that), the Agents, the categories, where they are " +
-    'stored, and diagnostics; "open" opens the Lodestar panel, where Agents and categories are managed.',
+    "Lodestar (skill loadout) keeps the user's Agents, named sets of skills (the user picks one on a card when a " +
+    "conversation's first message is sent, and the conversation keeps it), and their categories, their own groups " +
+    'of skills installed on their own. Actions: "list": every installed skill with what it does, the groups it is ' +
+    'in (by id) and the Agents that load it, then the categories and Agents; read it before "save". "save": change ' +
+    'categories and Agents; tell the user the plan first, then they confirm the exact changes on a card before ' +
+    'anything is written. New conversations get the change; this one keeps its skills. "undo": put back what the ' +
+    'last "save" changed, also confirmed on a card. "status": this session\'s skills and diagnostics. "open": open ' +
+    'the Lodestar panel.',
   inputSchema: {
     type: 'object',
-    properties: { action: { type: 'string', enum: ['status', 'open'] } },
+    properties: {
+      action: { type: 'string', enum: ['list', 'save', 'undo', 'status', 'open'] },
+      categories: {
+        type: 'object',
+        description:
+          'save: category name to the whole list of skills it holds from now on (names, or patterns with *; "!name" ' +
+          'leaves one out), or null to delete it. Only skills installed on their own go in categories (groups g: and ' +
+          'u: in "list"); a skill may be in several. Categories not named stay as they are.',
+        additionalProperties: { anyOf: [TEXT_LIST, { type: 'null' }] },
+      },
+      agents: {
+        type: 'object',
+        description:
+          'save: Agent name to everything it loads from now on, or null to delete it: "groups", group ids taken whole ' +
+          '(g:<category>, p:<plugin>, s:<source>), which also bring the skills a group gains later; "skills", single ' +
+          'skills by name. Agents not named stay as they are.',
+        additionalProperties: {
+          anyOf: [
+            { type: 'object', properties: { groups: TEXT_LIST, skills: TEXT_LIST }, additionalProperties: false },
+            { type: 'null' },
+          ],
+        },
+      },
+      rename: {
+        type: 'object',
+        description: 'save: old name to new, done first. A renamed category stays in the Agents that take it whole.',
+        properties: {
+          categories: { type: 'object', additionalProperties: { type: 'string' } },
+          agents: { type: 'object', additionalProperties: { type: 'string' } },
+        },
+        additionalProperties: false,
+      },
+    },
     required: ['action'],
   },
 }
+
+/** What the model reads with "list": how categories and Agents work, before it plans a "save". */
+const LIST_RULES =
+  'Categories (g:) are the user\'s own groups of skills installed on their own; "u:" holds those in no category, ' +
+  'and a skill may be in several categories. Plugin skills (p:) and Claude\'s own (s:) stay in their groups. An ' +
+  'Agent takes whole groups by id, which brings the skills a group gains later too, and single skills by name. ' +
+  '"save" replaces each category and Agent it names and leaves the rest as they are; it refuses the whole save ' +
+  'if anything is wrong, and the user confirms the exact changes on a card. Tell the user the plan before saving. ' +
+  "Agents are shared with the user's other agent platforms (Codex): an Agent's groups and skills that Claude Code " +
+  "doesn't have stay in it as they are."
+
+/** The store's key for the libraries a "save" replaced, newest last, for "undo". */
+const UNDO_KEY = 'undo'
+const MAX_UNDO = 10
+
+/** What one "save" replaced, and what it wrote. */
+type UndoStep = { at: number; before: Library; after: Library; renames?: [string, string][] }
 
 // The language the person is spoken to in.
 
@@ -330,6 +393,28 @@ async function loadLibrary($: EngineInterface): Promise<string> {
   return 'ok'
 }
 
+/** How many times a JSON file that reads back torn is written again. */
+const WRITE_TRIES = 3
+
+/**
+ * Writes a JSON file, then reads it back. `$.fs.write` writes in place, so two sessions writing at
+ * once (the desktop app starts spare sessions together) can leave it torn, with a run of zero bytes
+ * inside: then it is written again, after a short wait that differs between sessions. A file that
+ * reads back whole, someone else's write included, is left as it is.
+ */
+async function writeJson($: EngineInterface, path: string, text: string): Promise<void> {
+  for (let attempt = 0; attempt < WRITE_TRIES; attempt += 1) {
+    if (attempt > 0) await $.clock.sleep(40 + Math.floor(Math.random() * 160))
+    await $.fs.write(path, text)
+    try {
+      JSON.parse(await $.fs.read(path))
+      return
+    } catch {
+      // Torn, or being written by another session: again.
+    }
+  }
+}
+
 /** Writes the library and settings to library.json, keeping the store's copy in step. */
 async function writeLibrary($: EngineInterface): Promise<void> {
   const value = { library: await read($, library), prefs: await read($, prefs), extra: await read($, extra) }
@@ -337,7 +422,7 @@ async function writeLibrary($: EngineInterface): Promise<void> {
   const file = await read($, dataFile)
   if (file.path === '') return
   try {
-    await $.fs.write(file.path, libraryFileText(value.library, value.prefs, value.extra))
+    await writeJson($, file.path, libraryFileText(value.library, value.prefs, value.extra))
     if (file.status !== 'ok') await update($, dataFile, (): DataFile => ({ path: file.path, status: 'ok' }))
   } catch (error) {
     await update($, dataFile, (): DataFile => ({ path: file.path, status: 'unwritable', error: shortError(error) }))
@@ -400,6 +485,9 @@ async function refreshCatalog($: EngineInterface): Promise<void> {
   }
 }
 
+/** How long a skill list file that still says the same is left unwritten; its lastSeen times need refreshing only now and then. */
+const CATALOG_FRESH_MS = 12 * 60 * 60 * 1000
+
 /** Writes the skills Claude Code has to claude-code-skills.json, for other tools to show. */
 async function writeCatalogFile($: EngineInterface): Promise<string> {
   const skills = await read($, catalog)
@@ -407,18 +495,23 @@ async function writeCatalogFile($: EngineInterface): Promise<string> {
   const dir = await dataDir($)
   if (dir === null) return 'no home folder'
   const path = joinPath(dir, CATALOG_FILE)
-  let old: unknown
+  let old: { updatedAt?: unknown; skills?: unknown } | undefined
   try {
-    if (await $.fs.exists(path)) old = (JSON.parse(await $.fs.read(path)) as { skills?: unknown }).skills
+    if (await $.fs.exists(path)) old = JSON.parse(await $.fs.read(path)) as { updatedAt?: unknown; skills?: unknown }
   } catch {
+    // Missing, torn or half written: written anew below.
     old = undefined
   }
   const at = await nowOr0($)
-  const seen = mergeSeen(old, skills, at)
+  const seen = mergeSeen(old?.skills, skills, at)
   // The skills every set keeps, so that another tool counts a set as the card does.
   const { alwaysOn } = await read($, config)
+  // Every session writes this file as it starts, several at once in the desktop app: one that says
+  // the same and was written lately is left alone, so most starts write nothing.
+  const wasAt = typeof old?.updatedAt === 'string' ? Date.parse(old.updatedAt) : Number.NaN
+  if (at - wasAt < CATALOG_FRESH_MS && sameCatalog(old, alwaysOn, seen)) return `${seen.length} skills, unchanged`
   const file = { platform: 'claude-code', updatedAt: new Date(at).toISOString(), alwaysOn, skills: seen }
-  await $.fs.write(path, `${JSON.stringify(file, null, 2)}\n`)
+  await writeJson($, path, `${JSON.stringify(file, null, 2)}\n`)
   return `${seen.length} skills`
 }
 
@@ -671,8 +764,15 @@ async function briefing($: EngineInterface): Promise<string> {
     .filter(([name]) => !RESERVED.includes(name))
     .map(([name, preset]) => ({ name, summary: agentSummary(preset, groups, lang) }))
 
-  return choices.length === 0 ? '' : subagentBrief(choices, (await read($, prefs)).subagentPicker, lang)
+  const brief = choices.length === 0 ? '' : subagentBrief(choices, (await read($, prefs)).subagentPicker, lang)
+
+  return brief + TOOL_NOTE
 }
+
+/** The line the first listing ends with, so that the model knows where the user's sets and categories are changed. */
+const TOOL_NOTE =
+  "\n\n(To sort the user's skills into categories or change their skill sets (Agents), use the " +
+  'mcp__skill-loadout__loadout tool: "list" first, then "save"; the user confirms the changes on a card.)'
 
 // The session's loadout, while it can still be changed.
 
@@ -701,15 +801,48 @@ async function remember($: EngineInterface, value: Remembered): Promise<void> {
   await $.store.set('byFolder', Object.fromEntries([...others, [folder, value]].slice(-FOLDERS_KEPT)))
 }
 
-/** The Agent this folder's conversations used last, which the card offers first. */
-async function lastAgentHere($: EngineInterface): Promise<string | null> {
+/**
+ * What this folder's conversations used last, which the card offers first: an
+ * Agent's name, 不限制 (in either language, as ALL_WORDS has it), or null.
+ */
+async function lastPickHere($: EngineInterface): Promise<string | null> {
   const folder = await folderNow($)
   const byFolder = ((await $.store.get('byFolder')) ?? {}) as Record<string, Remembered>
   const found = Object.entries(byFolder)
     .reverse()
-    .find(([key]) => folderKey(key) === folder)
+    .find(([key]) => folderKey(key) === folder)?.[1]
+  if (found === undefined) return null
 
-  return found?.[1].preset ?? null
+  return found.preset ?? (found.allow === null ? UNLIMITED : null)
+}
+
+/** What recent conversations used, the newest first: Agents by name, and `unlimited` for every skill. */
+async function recentUses($: EngineInterface, unlimited: string): Promise<string[]> {
+  try {
+    return Object.values(await readLocks($))
+      .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+      .flatMap(one => (typeof one.agent === 'string' ? [one.agent] : one.allow === null ? [unlimited] : []))
+  } catch {
+    return []
+  }
+}
+
+/** Points the folders' memory and the kept locks at an Agent's new name, so that the card still ranks it. */
+async function rememberRename($: EngineInterface, from: string, to: string): Promise<void> {
+  try {
+    const byFolder = ((await $.store.get('byFolder')) ?? {}) as Record<string, Remembered>
+    await $.store.set(
+      'byFolder',
+      Object.fromEntries(Object.entries(byFolder).map(([key, one]) => [key, one.preset === from ? { ...one, preset: to } : one])),
+    )
+    const locks = await readLocks($)
+    await $.store.set(
+      LOCKS_KEY,
+      Object.fromEntries(Object.entries(locks).map(([id, one]) => [id, one.agent === from ? { ...one, agent: to } : one])),
+    )
+  } catch {
+    // The card only ranks the renamed Agent as new.
+  }
 }
 
 /** Sets this session's selection, before its first turn; every skill ticked is "every skill". */
@@ -788,7 +921,7 @@ async function applyPrepared($: EngineInterface, found: Prepared): Promise<void>
   const dir = await dataDir($)
   if (dir === null) return
   try {
-    await $.fs.write(joinPath(dir, NEXT_FILE), usedNextSession(found.raw, await sessionIdNow($), await nowOr0($)))
+    await writeJson($, joinPath(dir, NEXT_FILE), usedNextSession(found.raw, await sessionIdNow($), await nowOr0($)))
   } catch {
     // The set is this session's either way; another card may offer it again until the file says otherwise.
   }
@@ -835,7 +968,7 @@ async function setGroup($: EngineInterface, group: Group, isOn: boolean): Promis
 }
 
 function cleanName(raw: string): string {
-  return raw.trim().slice(0, MAX_NAME)
+  return plainName(raw)
 }
 
 /** Why a name cannot be an Agent's, or undefined when it can. */
@@ -855,7 +988,9 @@ async function saveAgentFromSession($: EngineInterface, raw: string): Promise<vo
   }
   const lib = await freshLibrary($)
   const isNew = !(name in lib.presets)
-  const preset = toPreset(await current($), await groupsNow($))
+  // Over an Agent that exists, the skills Claude Code doesn't have (Codex's) stay in it.
+  const groups = await groupsNow($, true)
+  const preset = keepUnseen(toPreset(await current($), groups), lib.presets[name], groups, await allNames($))
   await saveLibrary($, { ...lib, presets: { ...lib.presets, [name]: preset } })
   if ((await read($, lock)) === null) {
     await update($, active, () => name)
@@ -927,12 +1062,16 @@ async function saveDraft($: EngineInterface): Promise<void> {
     $.ui.toast(t.toast.nameTaken(name))
     return
   }
-  const preset = toPreset(edited.selected, await groupsNow($))
+  // The skills Claude Code doesn't have (Codex's) stay in the Agent as they were.
+  const groups = await groupsNow($, true)
+  const original = edited.original === null ? undefined : lib.presets[edited.original]
+  const preset = keepUnseen(toPreset(edited.selected, groups), original, groups, await allNames($))
   const entries = Object.entries(lib.presets).map(([key, value]) =>
     key === edited.original ? ([name, preset] as const) : ([key, value] as const),
   )
   const isNew = edited.original === null || !(edited.original in lib.presets)
   await saveLibrary($, { ...lib, presets: Object.fromEntries(isNew ? [...entries, [name, preset]] : entries) })
+  if (!isNew && edited.original !== null && edited.original !== name) await rememberRename($, edited.original, name)
   if (!isNew && (await read($, active)) === edited.original) await update($, active, () => name)
   $.ui.toast(isNew ? t.toast.created(name) : t.toast.saved(name))
   await go($, 'manage')
@@ -994,6 +1133,172 @@ async function removeGroup($: EngineInterface, label: string): Promise<void> {
   await go($, 'manage')
 }
 
+// The loadout tool's changes: Claude sorts the person's skills when they ask it to, in place of the panel or the client.
+
+/** The skills with what each does: the listing's words, or for one it has not described, claude-code-skills.json's. */
+async function describedCatalog($: EngineInterface): Promise<SkillEntry[]> {
+  const skills = await read($, catalog)
+  if (skills.every(skill => skill.description !== undefined)) return skills
+  const dir = await dataDir($)
+  let seen: Map<string, string>
+  try {
+    const file = dir === null ? undefined : (JSON.parse(await $.fs.read(joinPath(dir, CATALOG_FILE))) as { skills?: unknown })
+    const listed = Array.isArray(file?.skills) ? (file.skills as SkillEntry[]) : []
+    seen = new Map(listed.flatMap(one => (typeof one.description === 'string' ? [[one.name, one.description] as const] : [])))
+  } catch {
+    return skills
+  }
+
+  return skills.map(skill => (skill.description !== undefined || !seen.has(skill.name) ? skill : { ...skill, description: seen.get(skill.name) }))
+}
+
+/** The tool's answer to the model: text it reads as the result. */
+function toolText(text: string): { result: string; text: string } {
+  return { result: text, text }
+}
+
+/** Why library.json can't take a change now, or undefined when it can: a file the person broke stays as they wrote it. */
+function fileTrouble(file: DataFile): string | undefined {
+  if (file.status === 'ok') return undefined
+  const where = file.path === '' ? 'no home folder is known' : file.path
+
+  return `library.json can't be changed now (${file.status}${file.error === undefined ? '' : `: ${file.error}`}; ${where}). Nothing was saved.`
+}
+
+async function readUndo($: EngineInterface): Promise<UndoStep[]> {
+  try {
+    const kept = await $.store.get(UNDO_KEY)
+    return Array.isArray(kept) ? (kept as UndoStep[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** How many changes the confirmation card lists before it says how many more there are. */
+const CHANGES_SHOWN = 8
+
+type Confirmed = { isYes: boolean; isAnswered: boolean; typed: string }
+
+/**
+ * The option a confirmation card's answer names, read strictly: the label as it
+ * is, quoted, or followed by its description. Words typed under Other are no
+ * pick, so that 「不要保存」 never reads as 保存.
+ */
+function confirmPick(answer: string, labels: readonly string[]): string | null {
+  const quoted = [...answer.matchAll(/["“「『]([^"”」』]+)["”」』]/g)].map(match => (match[1] ?? '').trim())
+
+  return (
+    labels.find(
+      label =>
+        answer === label || quoted[quoted.length - 1] === label || answer.startsWith(`${label} - `) || answer.startsWith(`${label} — `),
+    ) ?? null
+  )
+}
+
+/** Asks on a card of this plugin's, two options with a line under each; an answer typed under Other comes back as `typed`. */
+async function confirmOnCard(
+  $: EngineInterface,
+  question: string,
+  yes: readonly [label: string, note: string],
+  no: readonly [label: string, note: string],
+): Promise<Confirmed> {
+  const t = await words($)
+  cardNotes.set(question, { notes: { [yes[0]]: yes[1], [no[0]]: no[1] }, isMain: false, isPlain: true })
+  try {
+    const answer = (await $.ui.ask(question, { header: t.cardHeader, options: [yes[0], no[0]] })).trim()
+    const picked = confirmPick(answer, [yes[0], no[0]])
+    return { isYes: picked === yes[0], isAnswered: true, typed: picked === null ? answer.slice(0, 300) : '' }
+  } catch {
+    // Closed, or nobody to ask.
+    return { isYes: false, isAnswered: false, typed: '' }
+  } finally {
+    cardNotes.delete(question)
+  }
+}
+
+/** What the model reads when the person did not say yes on the card. */
+function notConfirmed(answer: Confirmed, what: string): { deny: string } {
+  if (!answer.isAnswered) return { deny: `Nothing was ${what}: the confirmation card was closed, or nobody could be asked.` }
+  const said = answer.typed === '' ? '' : ` and wrote: "${answer.typed}"`
+
+  return { deny: `Nothing was ${what}: the user said no on the confirmation card${said}.` }
+}
+
+/**
+ * The tool's "save": checks every change, shows them on a card, and once the
+ * person says yes writes them together, keeping what they replaced for "undo".
+ */
+async function saveFromTool($: EngineInterface, input: Record<string, unknown>): Promise<{ result: string; text: string } | { deny: string }> {
+  const first = await freshLibrary($)
+  const trouble = fileTrouble(await read($, dataFile))
+  if (trouble !== undefined) return { deny: trouble }
+  const checked = applyChanges(first, input, await read($, catalog), await alwaysNow($))
+  if (checked.problems.length > 0) return { deny: `Nothing was saved:\n- ${checked.problems.join('\n- ')}` }
+  if (checked.changes.length === 0) return toolText('Nothing to change: the categories and Agents named are already like that.')
+  const t = await words($)
+  const lines = checked.changes.map(change => t.confirm.change(change))
+  const answer = await confirmOnCard(
+    $,
+    t.confirm.question(lines.slice(0, CHANGES_SHOWN), Math.max(0, lines.length - CHANGES_SHOWN)),
+    [t.confirm.save, t.confirm.saveNote],
+    [t.confirm.cancel, t.confirm.cancelNote],
+  )
+  if (!answer.isYes) return notConfirmed(answer, 'saved')
+  // The file as it is now: the panel or the client may have changed it while the card waited.
+  const before = await freshLibrary($)
+  const outcome =
+    JSON.stringify(before) === JSON.stringify(first) ? checked : applyChanges(before, input, await read($, catalog), await alwaysNow($))
+  if (outcome.problems.length > 0) {
+    return { deny: `Nothing was saved: library.json changed while the card was open, and now:\n- ${outcome.problems.join('\n- ')}` }
+  }
+  await saveLibrary($, outcome.library)
+  const written = await read($, dataFile)
+  if (written.status !== 'ok') return { deny: `library.json could not be written (${written.error ?? written.status}). Nothing was saved.` }
+  const steps = await readUndo($)
+  const renames = outcome.changes.flatMap(change => (change.kind === 'agentRenamed' ? [[change.from, change.to] as [string, string]] : []))
+  const step: UndoStep = { at: await nowOr0($), before, after: outcome.library, renames }
+  await $.store.set(UNDO_KEY, [...steps, step].slice(-MAX_UNDO))
+  for (const [from, to] of renames) {
+    await rememberRename($, from, to)
+    if ((await read($, active)) === from) await update($, active, () => to)
+  }
+
+  return toolText(
+    `Saved to ${written.path}:\n- ${outcome.changes.map(changeForModel).join('\n- ')}\n` +
+      "New conversations' cards offer these; this conversation keeps the skills it started with. " +
+      '"undo" puts back what this save changed.',
+  )
+}
+
+/** The tool's "undo": puts library.json's categories and Agents back as they were before the last save. */
+async function undoFromTool($: EngineInterface): Promise<{ result: string; text: string } | { deny: string }> {
+  const steps = await readUndo($)
+  const last = steps[steps.length - 1]
+  if (last === undefined) return toolText('Nothing to undo: no save made with this tool is kept.')
+  const now = await freshLibrary($)
+  const trouble = fileTrouble(await read($, dataFile))
+  if (trouble !== undefined) return { deny: trouble }
+  const minutes = Math.max(0, Math.round(((await nowOr0($)) - last.at) / 60_000))
+  const isChangedSince = JSON.stringify(now) !== JSON.stringify(last.after)
+  const t = await words($)
+  const answer = await confirmOnCard($, t.confirm.undoQuestion(minutes, isChangedSince), [t.confirm.undo, t.confirm.undoNote], [
+    t.confirm.keep,
+    t.confirm.keepNote,
+  ])
+  if (!answer.isYes) return notConfirmed(answer, 'undone')
+  await saveLibrary($, last.before)
+  const written = await read($, dataFile)
+  if (written.status !== 'ok') return { deny: `library.json could not be written (${written.error ?? written.status}). Nothing was undone.` }
+  await $.store.set(UNDO_KEY, steps.slice(0, -1))
+  for (const [from, to] of [...(last.renames ?? [])].reverse()) await rememberRename($, to, from)
+
+  return toolText(
+    `Undone: the categories and Agents are back as they were before the save of ${minutes} min ago.` +
+      (isChangedSince ? ' Changes made after that save, in the panel or the client, are undone with it.' : '') +
+      (steps.length > 1 ? ` ${steps.length - 1} earlier save(s) can still be undone.` : ''),
+  )
+}
+
 async function resetLibrary($: EngineInterface): Promise<void> {
   const defaults = await read($, config)
   await freshLibrary($)
@@ -1019,14 +1324,16 @@ async function describer(
   const t = WORDS[lang]
   const groups = groupSkills(skills, lib.groups, true, lang)
   const always = await alwaysNow($)
-  const last = isFirstMessage ? await lastAgentHere($) : null
-  const agentCount = offeredAgents(lib).length
+  const last = isFirstMessage ? await lastPickHere($) : null
+  const isLastAll = last !== null && ALL_WORDS.includes(last)
   const line = (...parts: (string | undefined)[]): string => parts.filter(part => part !== undefined && part !== '').join(' · ')
 
   return label => {
     const note = notes[label]
-    if (ALL_WORDS.includes(label)) return line(note, names.length > 0 ? t.card.allSkills(names.length) : t.card.allSkillsUnknown)
-    if (MORE_LABELS.includes(label)) return t.card.nextPage(agentCount)
+    if (ALL_WORDS.includes(label)) {
+      return line(isLastAll ? t.card.lastHere : note, names.length > 0 ? t.card.allSkills(names.length) : t.card.allSkillsUnknown)
+    }
+    if (MORE_LABELS.includes(label)) return note ?? ''
     const preset = lib.presets[label]
     if (preset === undefined) return note ?? ''
     const count = new Set([...resolvePreset(preset, groups, names), ...always]).size
@@ -1043,7 +1350,8 @@ type CardResult = { picked: string | null; answers: string[]; outcome: string }
 
 /**
  * Shows the card until an option is picked: 「更多 Agent…」 pages through the
- * pool, and an answer that names none asks again, a few times at most. Each
+ * pool, saying what the next page holds, and an answer that names none asks
+ * again, a few times at most. Each
  * round reads what it offers anew (`round`), so that an Agent or a set made in
  * the tray client while the card waits shows on the next one.
  */
@@ -1055,9 +1363,11 @@ async function askCard($: EngineInterface, round: () => Promise<CardRound>): Pro
   for (let turn = 0; turn < MAX_ROUNDS && misses < MAX_MISSES; turn += 1) {
     const now = await round()
     const t = await words($)
-    const page = askPage(now.pool, start, now.fixed, t.more)
+    const page = askPage(now.pool, start, t.more)
     const asked = (lead === '' ? (now.hint ?? '') : lead) + now.question
-    cardNotes.set(asked, { notes: now.notes, isMain: now.isMain })
+    const following = askPage(now.pool, page.next, t.more).options.filter(option => option !== t.more)
+    const notes = page.options.includes(t.more) ? { ...now.notes, [t.more]: t.card.nextPage(following, page.next === 0) } : now.notes
+    cardNotes.set(asked, { notes, isMain: now.isMain })
     let answer: string
     try {
       answer = await $.ui.ask(asked, { header: t.cardHeader, options: page.options })
@@ -1097,18 +1407,20 @@ async function askLoadout($: EngineInterface): Promise<CardResult> {
   }
   await update($, asking, () => true)
   try {
-    const last = await lastAgentHere($)
+    const last = await lastPickHere($)
     const card = await askCard($, async () => {
       const agents = offeredAgents(await freshLibrary($))
       const t = await words($)
-      const ordered = agentOrder(agents, last)
+      // What the folder used last first, then what recent conversations used most; 不限制 is one of them.
+      const lastHere = last !== null && ALL_WORDS.includes(last) ? t.unlimited : last
+      const ordered = rankChoices([...agents, t.unlimited], await recentUses($, t.unlimited), lastHere)
       const found = await readPrepared($)
       if (found === null) {
         const hint = (await hasClient($)) ? t.card.clientHint : ''
-        return { question: t.ask, hint, pool: ordered, fixed: [t.unlimited], agents, notes: {}, isMain: true }
+        return { question: t.ask, hint, pool: ordered, agents, notes: {}, isMain: true }
       }
       const notes = { [t.clientPick]: await preparedNote($, found.next) }
-      return { question: t.ask, pool: [t.clientPick, ...ordered], fixed: [t.unlimited], agents, notes, isMain: true }
+      return { question: t.ask, pool: [t.clientPick, ...ordered], agents, notes, isMain: true }
     })
     let isSet = false
     if (card.picked !== null && CLIENT_LABELS.includes(card.picked)) {
@@ -1150,13 +1462,14 @@ async function askSubagent(
   // The suggestion as the card names it: an Agent, or 不限制 in the card's language.
   const named = suggested !== null && ALL_WORDS.includes(suggested) ? t.unlimited : suggested
   const first = named !== null && (agents.includes(named) || named === t.unlimited) ? named : null
-  const pool = [...(first === null ? [] : [first]), ...[...agents, t.unlimited].filter(name => name !== first)]
+  const rest = rankChoices([...agents, t.unlimited].filter(name => name !== first), await recentUses($, t.unlimited), null)
+  const pool = [same, ...(first === null ? [] : [first]), ...rest]
   const question = t.card.subQuestion(task.description === '' ? t.card.newTask : task.description)
   const notes = {
     [same]: t.card.keeps(parent.label),
     ...(first === null ? {} : { [first]: t.card.suggested }),
   }
-  const card = await askCard($, async () => ({ question, pool, fixed: [same], agents, notes, isMain: false }))
+  const card = await askCard($, async () => ({ question, pool, agents, notes, isMain: false }))
   const kept: SubLoadout = { ...task, allow: parent.allow, label: parent.label, by: 'inherit' }
   if (card.picked === null || card.picked === same) return kept
 
@@ -1306,8 +1619,19 @@ export const register: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // The tool, answered here: a save or an undo writes only once the person confirms it on a card.
   on('tool.call', { tool: 'mcp__skill-loadout__loadout' }, async ($, e) => {
-    const input = e as { action?: string }
+    const input = e as Record<string, unknown> & { action?: string }
+    if (input.action === 'save') return saveFromTool($, input)
+    if (input.action === 'undo') return undoFromTool($)
+    if (input.action === 'list') {
+      const lib = await freshLibrary($)
+      const report = libraryReport(lib, await describedCatalog($), await alwaysNow($), await langNow($))
+      const file = await read($, dataFile)
+      // Compact: about 6k tokens for a hundred skills.
+      const text = JSON.stringify({ file: file.path, howItWorks: LIST_RULES, ...report })
+      return { result: text, text }
+    }
     if (input.action === 'open') {
       const opened = await openPane($)
       // The model reads this, and tells the person in their own words.
@@ -1360,6 +1684,7 @@ export const register: Register = on => {
     const text = JSON.stringify(status, null, 2)
     return { result: text, text }
   }).catch(($, e, next) => next(e))
+
 
   on('command.run', { command: 'loadout' }, async ($, e) => {
     const typed = e.args.trim()
@@ -1479,6 +1804,13 @@ export const register: Register = on => {
     const [first, ...rest] = e.questions
     if (first === undefined || !CARD_HEADERS.includes(first.header)) return next(e)
     const card = [...cardNotes.entries()].find(([question]) => first.question.endsWith(question))?.[1]
+    if (card?.isPlain === true) {
+      const options = first.options.map(option => {
+        const description = card.notes[option.label]
+        return description === undefined ? option : { ...option, description }
+      })
+      return next({ ...e, questions: [{ ...first, options }, ...rest] })
+    }
     const isMain = card?.isMain ?? ASK_QUESTIONS.some(question => first.question.endsWith(question))
     const describe = await describer($, card?.notes ?? {}, isMain)
     const options = first.options.map(option => {
@@ -1846,6 +2178,9 @@ export const register: Register = on => {
         <Box flexDirection="column" rowGap="lg">
           <Box flexDirection="column" rowGap="xs">
             {screenHeader('back', p.back, 'main', p.manage)}
+            <Text size="caption" dimColor>
+              {p.askClaude}
+            </Text>
             {held !== null && (
               <Text size="caption" dimColor>
                 {p.lockedNote}

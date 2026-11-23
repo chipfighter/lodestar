@@ -19,7 +19,7 @@ import {
   makeStyles,
   tokens,
 } from '@fluentui/react-components'
-import { ArrowReset20Regular, FolderOpen20Regular } from '@fluentui/react-icons'
+import { ArrowReset20Regular, ArrowSync20Regular, FolderOpen20Regular } from '@fluentui/react-icons'
 
 import type { Language } from '../../../plugin/types'
 import { FILES } from '../data/files'
@@ -80,6 +80,22 @@ export function SettingsPage({ state, actions }: { state: DataState; actions: Ac
       <Caption1 className={styles.dim}>{t.catalogMissing}</Caption1>
     )
 
+  const codex = state.codex
+  const codexAgent = codex.record?.agent ?? null
+  const codexUsing =
+    codexAgent === null ? t.codexAll : codexAgent in state.value.library.presets ? strings.quote(codexAgent) : t.codexGone(codexAgent)
+  const codexSkillsText = codex.isRefreshing ? (
+    <Caption1 className={styles.dim}>{t.codexReading}</Caption1>
+  ) : codex.error !== null ? (
+    <Caption1 className={styles.bad}>{codex.error}</Caption1>
+  ) : codex.catalog.updatedAt !== null ? (
+    <Caption1 className={styles.ok}>
+      {t.codexSkillsOk(codex.catalog.skills.length, timeAgo(strings, codex.catalog.updatedAt, state.now))}
+    </Caption1>
+  ) : (
+    <Caption1 className={styles.dim}>{t.codexSkillsNone}</Caption1>
+  )
+
   return (
     <div className={styles.scroll}>
       <PageHeader title={t.title} />
@@ -104,6 +120,44 @@ export function SettingsPage({ state, actions }: { state: DataState; actions: Ac
             </RadioGroup>
           </SettingRow>
         </Section>
+
+        {codex.info === undefined ? null : (
+          <Section title={t.codex}>
+            {codex.info === null ? (
+              <SettingRow title={t.codexNone} hint={t.codexNoneHint} />
+            ) : (
+              <>
+                <SettingRow title={t.codexUsing} hint={codexUsing}>
+                  <Button
+                    disabled={codexAgent === null}
+                    onClick={() => run(actions.useForCodex(null).then(() => undefined), strings.codex.setAllDone)}
+                  >
+                    {strings.codex.setAll}
+                  </Button>
+                </SettingRow>
+                <SettingRow title={t.codexSkills} hint={codexSkillsText}>
+                  <Button icon={<ArrowSync20Regular />} disabled={codex.isRefreshing} onClick={() => run(actions.refreshCodex())}>
+                    {t.refresh}
+                  </Button>
+                </SettingRow>
+                <SettingRow
+                  title={t.codexConfig}
+                  hint={
+                    <span className={styles.status}>
+                      <span>{t.codexConfigHint}</span>
+                      <span className={styles.path}>{codex.info.config}</span>
+                    </span>
+                  }
+                >
+                  <Button icon={<FolderOpen20Regular />} onClick={() => run(actions.openCodexDir())}>
+                    {strings.open}
+                  </Button>
+                </SettingRow>
+                <SettingRow title={t.codexProgram} hint={<span className={styles.path}>{codex.info.program}</span>} />
+              </>
+            )}
+          </Section>
+        )}
 
         <Section title={t.app}>
           <SettingRow title={t.language} hint={t.languageHint}>

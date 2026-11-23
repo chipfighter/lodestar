@@ -15,9 +15,16 @@ export type Model = {
   always: Set<string>
   /** The Agents each skill is in. */
   usedBy: Map<string, string[]>
+  /** Skills the person switched off in the platform itself (Codex's Skills page): no Agent loads them. */
+  off: Set<string>
 }
 
-export function buildModel(skills: readonly SkillEntry[], library: Library, alwaysOn: readonly string[]): Model {
+export function buildModel(
+  skills: readonly SkillEntry[],
+  library: Library,
+  alwaysOn: readonly string[],
+  off: readonly string[] = [],
+): Model {
   const names = skills.map(skill => skill.name)
   const groups = groupSkills(skills, library.groups, true)
   const categoriesOf = new Map<string, Group[]>()
@@ -38,6 +45,7 @@ export function buildModel(skills: readonly SkillEntry[], library: Library, alwa
     categoriesOf,
     always: new Set(names.filter(name => matchesAny(alwaysOn, name))),
     usedBy,
+    off: new Set(off),
   }
 }
 
