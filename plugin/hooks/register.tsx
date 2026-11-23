@@ -34,6 +34,7 @@ import {
   deleteGroup,
   describeSelection,
   filterListing,
+  folderKey,
   groupLabel,
   groupSkills,
   hiddenNote,
@@ -675,19 +676,40 @@ async function briefing($: EngineInterface): Promise<string> {
 
 // The session's loadout, while it can still be changed.
 
+/** The most folders the card remembers; the one used longest ago goes first. */
+const FOLDERS_KEPT = 200
+
+/**
+ * The folder this conversation works in, read when it is needed: the desktop app starts a session
+ * in a spare or scratch folder and moves it to the person's folder before the first message. In a
+ * repository it is the main folder, so its worktrees and subfolders share one memory.
+ */
+async function folderNow($: EngineInterface): Promise<string> {
+  try {
+    const repo = await $.session.repo()
+    return folderKey(repo?.root ?? (await $.session.root()))
+  } catch {
+    return folderKey(await read($, cwd))
+  }
+}
+
 async function remember($: EngineInterface, value: Remembered): Promise<void> {
-  const folder = await read($, cwd)
+  const folder = await folderNow($)
   if (folder === '') return
   const byFolder = ((await $.store.get('byFolder')) ?? {}) as Record<string, Remembered>
-  await $.store.set('byFolder', { ...byFolder, [folder]: value })
+  const others = Object.entries(byFolder).filter(([key]) => folderKey(key) !== folder)
+  await $.store.set('byFolder', Object.fromEntries([...others, [folder, value]].slice(-FOLDERS_KEPT)))
 }
 
 /** The Agent this folder's conversations used last, which the card offers first. */
 async function lastAgentHere($: EngineInterface): Promise<string | null> {
-  const folder = await read($, cwd)
+  const folder = await folderNow($)
   const byFolder = ((await $.store.get('byFolder')) ?? {}) as Record<string, Remembered>
+  const found = Object.entries(byFolder)
+    .reverse()
+    .find(([key]) => folderKey(key) === folder)
 
-  return byFolder[folder]?.preset ?? null
+  return found?.[1].preset ?? null
 }
 
 /** Sets this session's selection, before its first turn; every skill ticked is "every skill". */

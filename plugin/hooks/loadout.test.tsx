@@ -151,6 +151,10 @@ function engine(
     onAsk?: (asked: readonly Asked[], files: Map<string, string>) => void
     /** The language an earlier session came to; Chinese unless a test says otherwise, null for none. */
     language?: 'zh' | 'en' | null
+    /** The folder the session works in now, `/work` unless a test moves it. */
+    root?: string
+    /** The main folder of the repository the session is in; none unless a test says so. */
+    repoRoot?: string
   } = {},
 ): Fake {
   const store = new Map<string, unknown>()
@@ -202,6 +206,10 @@ function engine(
   on('clock.now', () => ({ value: 0 }))
   on('clock.sleep', () => ({ value: undefined }))
   on('session.id', () => ({ value: options.sessionId?.() ?? 'S1' }))
+  on('session.root', () => ({ value: options.root ?? '/work' }))
+  on('session.repo', () => ({
+    value: options.repoRoot === undefined ? null : { root: options.repoRoot, remote: null, internal: false, name: null },
+  }))
   on('session.messages', () => ({ value: (options.rows?.() ?? (options.history ? HISTORY : [])) as never }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
@@ -525,6 +533,26 @@ test('the folder’s last Agent comes first; many Agents come two at a time; a t
   const text = await listing($)
   expect(text).toContain('- code-review:')
   expect(text.includes('- image-prompt:')).toBe(false)
+})
+
+test('a session moved after it started remembers the folder it works in, by its repository', async ($, on) => {
+  const agents = Object.fromEntries(['甲', '乙', '丙'].map(name => [name, { groups: [], skills: ['code-review'] }]))
+  const fake = engine(on, {
+    answers: ['乙'],
+    files: { [LIBRARY_PATH]: JSON.stringify({ groups: {}, agents }) },
+    // The desktop app started it in a spare folder, then moved it to a worktree of D:\code\app.
+    root: 'D:\\code\\app\\.claude\\worktrees\\fix',
+    repoRoot: 'D:\\code\\app',
+  })
+  // An earlier version keyed the same folder with backslashes and capitals.
+  fake.store.set('byFolder', { 'D:\\Code\\App\\': { preset: '丙', allow: ['code-review'] } })
+  await $.session.start({ cwd: 'C:\\Users\\me\\.claude\\spares\\spare-1', surface: 'desktop', isInteractive: true })
+  await say($, '修个 bug')
+
+  expect(fake.asked[0]?.options.map(option => option.label)).toEqual(['丙', '甲', '乙', '不限制'])
+  const byFolder = fake.store.get('byFolder') as Record<string, { preset: string | null }>
+  expect(Object.keys(byFolder)).toEqual(['d:/code/app'])
+  expect(byFolder['d:/code/app']?.preset).toBe('乙')
 })
 
 test('with the card turned off nothing is asked, the panel opens, and the switch is saved to the file', async ($, on) => {

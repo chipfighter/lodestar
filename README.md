@@ -130,6 +130,7 @@ The first run creates `library.json` with two example Agents, *Coding* and *Docs
 <details>
 <summary><b>Known limits</b></summary>
 
+- Lodestar sets which skills a session sees, not which hooks run. A plugin that works only through hooks, such as security-guidance, runs in every session as Claude Code loads it.
 - The client is Windows-only for now, and its installer isn't code-signed.
 - With the language on Automatic, the plugin follows your messages and the client follows Windows, so the two can differ.
 - Forks are matched by Claude's replies. Replies under 20 characters don't count, and a fork whose copied replies were all compacted away gets **No limit**.

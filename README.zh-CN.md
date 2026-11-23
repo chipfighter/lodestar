@@ -130,6 +130,7 @@ Claude Code 会把你装的所有 skill 都列给模型，每个会话都是。L
 <details>
 <summary><b>已知限制</b></summary>
 
+- Lodestar 管的是会话里能看到哪些 skill，不管 hook。只靠 hook 工作的插件（比如 security-guidance）照 Claude Code 的方式，在每个会话里都会运行。
 - 客户端暂时只有 Windows 版，安装包没有代码签名。
 - 语言设成「自动」时，插件跟着你的消息，客户端跟着 Windows，两边可能不一样。
 - fork 靠 Claude 的回复认原会话：不到 20 个字的回复不算；复制过来的回复全被压缩掉了，就按「不限制」处理。

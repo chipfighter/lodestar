@@ -279,6 +279,16 @@ export function agentOrder(names: readonly string[], last: string | null): strin
 }
 
 /**
+ * A folder as the card's memory keys it, so that one folder spelled two ways is one key:
+ * forward slashes, no slash at the end, and on Windows (a drive letter) one case.
+ */
+export function folderKey(path: string): string {
+  const slashed = path.trim().replace(/\\/g, '/').replace(/(.)\/+$/, '$1')
+
+  return /^[A-Za-z]:/.test(slashed) ? slashed.toLowerCase() : slashed
+}
+
+/**
  * One card's options. The card holds four: the pool and the fixed options when
  * they fit, else a page of the pool beside 「更多 Agent…」, the fixed ones last.
  */
