@@ -160,8 +160,8 @@ const LOADOUT_TOOL = {
   name: 'loadout',
   description:
     'Lodestar (skill loadout): action "status" returns the skills this session loads (the person picks an Agent when the ' +
-    "conversation's first message is sent; locked after that), the Agents, the skill groups, where they are " +
-    'stored, and diagnostics; "open" opens the Lodestar panel, where Agents and skill groups are managed.',
+    "conversation's first message is sent; locked after that), the Agents, the categories, where they are " +
+    'stored, and diagnostics; "open" opens the Lodestar panel, where Agents and categories are managed.',
   inputSchema: {
     type: 'object',
     properties: { action: { type: 'string', enum: ['status', 'open'] } },

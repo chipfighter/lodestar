@@ -828,7 +828,7 @@ test('a group is made from loose skills only, renamed, and deleted', async ($, o
   expect(await ui.find({ type: 'Text', text: /成员 2 个/ })).toBeDefined()
   await ui.press({ key: 'group-done' })
   expect(await ui.find({ key: 'edit-group:视频素材' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /没归组/ }))?.text).toBe('还有 2 个零碎装的 skill 没归组')
+  expect((await ui.find({ type: 'Text', text: /没分类/ }))?.text).toBe('还有 2 个单独安装的 skill 没分类')
   expect(await ui.find({ type: 'Text', text: /插件和 Claude 自带/ })).toBeDefined()
 
   // On the main screen the group is ticked whole.
@@ -838,7 +838,7 @@ test('a group is made from loose skills only, renamed, and deleted', async ($, o
   await ui.press({ key: 'del-group:视频素材' })
   await ui.press({ key: 'del-group:视频素材' })
   expect(await ui.find({ key: 'edit-group:视频素材' })).toBe(undefined)
-  expect((await ui.find({ type: 'Text', text: /没归组/ }))?.text).toBe('还有 4 个零碎装的 skill 没归组')
+  expect((await ui.find({ type: 'Text', text: /没分类/ }))?.text).toBe('还有 4 个单独安装的 skill 没分类')
   await ui.unmount()
 
   expect(fileOf(fake, LIBRARY_PATH)['groups']).toEqual({})

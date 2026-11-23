@@ -24,7 +24,7 @@ Claude Code shows the model every skill you have installed, in every session. Lo
 - **Pick at the first message.** A card asks which Agent to use before Claude reads anything, so nothing in the prompt cache is lost.
 - **One set per session.** It locks once the session starts. Need one more skill? Name it in your message.
 - **Subagents included.** Each subagent can get its own set; forks keep their parent's.
-- **A tray client for Windows.** Build Agents and skill groups any time, and prepare a one-off set for your next session.
+- **A tray client for Windows.** Build Agents, browse every skill you have, and prepare a one-off set for your next session.
 - **Chinese and English**, in the plugin and the client alike.
 
 ## Install
@@ -61,8 +61,9 @@ Download `Lodestar_<version>_x64-setup.exe` from the [latest release](https://gi
 
 ## Concepts
 
-- **Agent**: a named set of skills, such as *Coding* or *Video production*. Each session uses one.
-- **Skill group**: a category of skills. Each plugin is a group, and so are Claude's built-in skills; the skills you install one by one, you group yourself.
+- **Agent**: a named set of skills, such as *Coding* or *Video production*. Each session uses one. An Agent takes whole groups, including skills they gain later, or just a few of their skills, from anywhere.
+- **Group**: skills that came together. Each plugin is a group, and so are Claude's built-in skills.
+- **Category**: your own group for skills you installed on their own. A skill can be in several categories, and an Agent can take a whole category.
 
 ## Settings
 
@@ -81,7 +82,7 @@ Everything is plain JSON in `~/.skill-loadout/` (or the folder `SKILL_LOADOUT_HO
 
 | File | Holds | Written by |
 | --- | --- | --- |
-| `library.json` | Agents, skill groups and settings | the panel, the client, you |
+| `library.json` | Agents, categories and settings | the panel, the client, you |
 | `claude-code-skills.json` | The skills Claude Code has, with their descriptions | the plugin |
 | `next-session.json` | A set prepared for the next session | the client |
 | `client.json` | Where the client is installed | the client |
@@ -106,8 +107,8 @@ The first run creates `library.json` with two example Agents, *Coding* and *Docs
 }
 ```
 
-- `groups`: a group name and its skills. `*` is a wildcard; `!name` leaves a skill out.
-- `agents`: an Agent's whole `groups`, by ID (`g:<your group>`, `p:<plugin>`, `s:built-in`), plus single `skills`.
+- `groups`: your categories, each a name and its skills. `*` is a wildcard; `!name` leaves a skill out. A skill may be in several.
+- `agents`: an Agent's whole `groups`, by ID (`g:<category>`, `p:<plugin>`, `s:built-in`), plus single `skills`.
 - `subagentPicker`: `agent` or `person`. `language`: `auto`, `zh` or `en`.
 - Fields that Lodestar doesn't know are kept when it saves.
 
@@ -137,7 +138,7 @@ The first run creates `library.json` with two example Agents, *Coding* and *Docs
 - Sessions started by another session or by a scheduled task also wait on the card; turn the card off if that gets in the way.
 - Whether the main agent names a subagent's set depends on the model (Haiku doesn't); naming the set in your request always works.
 - A subagent's set is kept in memory: after a restart, a resumed subagent gets the main session's set.
-- If two places save Agents or groups at the same moment, the later save wins.
+- If two places save Agents or categories at the same moment, the later save wins.
 
 </details>
 

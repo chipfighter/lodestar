@@ -1,6 +1,6 @@
 [package]
 name = "lodestar"
-version = "0.2.2"
+version = "0.2.3"
 description = "Lodestar's tray client: manage Agents and skill groups, and prepare a set for the next Claude Code session."
 authors = ["chipfighter"]
 license = "MIT"
