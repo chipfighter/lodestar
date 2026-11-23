@@ -7,7 +7,7 @@
 **Choose which skills each Claude Code session loads — and only those.**
 
 [![Release](https://img.shields.io/github/v/release/chipfighter/lodestar?label=release&color=4542E8)](https://github.com/chipfighter/lodestar/releases/latest)
-[![License](https://img.shields.io/github/license/chipfighter/lodestar?color=4542E8)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4542E8)](LICENSE)
 [![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-F6B22E)](#install)
 [![Windows client](https://img.shields.io/badge/client-Windows-F6B22E)](#install)
 

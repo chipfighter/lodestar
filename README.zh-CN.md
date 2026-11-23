@@ -7,7 +7,7 @@
 **让每个 Claude Code 会话只装需要的技能。**
 
 [![Release](https://img.shields.io/github/v/release/chipfighter/lodestar?label=release&color=4542E8)](https://github.com/chipfighter/lodestar/releases/latest)
-[![License](https://img.shields.io/github/license/chipfighter/lodestar?color=4542E8)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-4542E8)](LICENSE)
 [![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-F6B22E)](#安装)
 [![Windows client](https://img.shields.io/badge/client-Windows-F6B22E)](#安装)
 
