@@ -66,7 +66,7 @@ const useStyles = makeStyles({
     padding: '18px 12px 14px',
     boxSizing: 'border-box',
   },
-  brand: { display: 'flex', alignItems: 'center', gap: '10px', padding: '4px 8px 10px' },
+  brand: { display: 'flex', alignItems: 'center', gap: '8px', padding: '2px 6px 8px' },
   tabs: { gap: '2px' },
   navFooter: { marginTop: 'auto', display: 'flex', alignItems: 'center', gap: '8px', padding: '0 8px' },
   version: { color: tokens.colorNeutralForeground3 },
@@ -129,7 +129,7 @@ export function App() {
           <div className={styles.shell}>
             <nav className={styles.nav} aria-label={strings.appName}>
               <div className={styles.brand}>
-                <AppIcon size={28} />
+                <AppIcon size={34} />
                 <Subtitle2>{strings.appName}</Subtitle2>
               </div>
               <TabList

@@ -65,7 +65,7 @@ const PANE = {
   component: 'Pane',
   requestId: 'skill-loadout',
   props: {
-    title: '技能装配',
+    title: 'Lodestar',
     isFocused: false,
     bodyColumns: 48,
     placement: 'dock',
@@ -885,6 +885,7 @@ test('an answer picks its option however the host words it; a subagent prompt na
   expect(pickOption('随便', offered, agents)).toBe(null)
   expect(markerName('做一张海报\n技能装配：只要图片\n')).toBe('只要图片')
   expect(markerName('Skill loadout: 「设计」')).toBe('设计')
+  expect(markerName('Look into it.\nLodestar: Coding')).toBe('Coding')
   expect(markerName('没有指定')).toBe(null)
 })
 

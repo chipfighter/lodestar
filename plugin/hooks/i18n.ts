@@ -178,8 +178,8 @@ export type Words = {
 }
 
 const zh: Words = {
-  title: '技能装配',
-  cardHeader: '技能装配',
+  title: 'Lodestar',
+  cardHeader: 'Lodestar',
   unlimited: '不限制',
   more: '更多 Agent…',
   ask: '这个会话用哪套技能？',
@@ -237,9 +237,9 @@ const zh: Words = {
   },
 
   command: {
-    description: '打开技能装配面板；发第一条消息前可用 /loadout <Agent 名> 直接切换（/loadout 不限制 装全部 skill）',
+    description: '打开 Lodestar 面板；发第一条消息前可用 /loadout <Agent 名> 直接切换（/loadout 不限制 装全部 skill）',
     hint: '[Agent 名]',
-    opened: '技能装配面板已打开。',
+    opened: 'Lodestar 面板已打开。',
     noClientSet: '客户端里现在没有调好的一套（没调过、超过两小时，或者已经被别的会话用了）。',
     usingClient: label => `这个会话改用客户端里调好的一套（${label}），发出第一条消息后锁定。`,
     using: name => `这个会话改用「${name}」，发出第一条消息后锁定。`,
@@ -349,8 +349,8 @@ const zh: Words = {
 const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`
 
 const en: Words = {
-  title: 'Skill Loadout',
-  cardHeader: 'Skill set',
+  title: 'Lodestar',
+  cardHeader: 'Lodestar',
   unlimited: 'No limit',
   more: 'More Agents…',
   ask: 'Which skill set for this session?',
@@ -408,9 +408,9 @@ const en: Words = {
   },
 
   command: {
-    description: 'Open the Skill Loadout panel; before the first message, /loadout <Agent> switches directly (/loadout No limit loads every skill)',
+    description: 'Open the Lodestar panel; before the first message, /loadout <Agent> switches directly (/loadout No limit loads every skill)',
     hint: '[Agent]',
-    opened: 'The Skill Loadout panel is open.',
+    opened: 'The Lodestar panel is open.',
     noClientSet: 'Nothing is prepared in the client right now (never prepared, over two hours old, or taken by another session).',
     usingClient: label => `This session now uses the set prepared in the client (${label}); it locks when the first message is sent.`,
     using: name => `This session now uses "${name}"; it locks when the first message is sent.`,

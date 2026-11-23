@@ -1,4 +1,4 @@
-# skill-loadout（技能装配）
+# Lodestar
 
 [English](README.md) | 简体中文
 
@@ -11,6 +11,8 @@
 
 两部分都支持中文和英文。
 
+> v0.2.1 之前叫 skill-loadout（技能装配）。插件 ID（`skill-loadout`）和数据文件夹（`~/.skill-loadout`）沿用原来的名字，已经装好的插件和数据都照常可用。
+
 ![托盘客户端（示例数据）](docs/client-zh.png)
 
 ## 安装
@@ -20,20 +22,20 @@
 在会话的输入框里：
 
 ```
-/plugin install skill-loadout --marketplace chipfighter/skill-loadout
+/plugin install skill-loadout --marketplace chipfighter/lodestar
 ```
 
 或者在终端里：
 
 ```
-claude plugin install skill-loadout --marketplace chipfighter/skill-loadout
+claude plugin install skill-loadout --marketplace chipfighter/lodestar
 ```
 
 接着按 `y` 添加这个插件市场，再选安装范围。装好后新开一个会话就生效；第一次运行时，会在用户目录下生成 `.skill-loadout/library.json`，里面是两个示例 Agent（见下面「默认值」）。
 
 ### 托盘客户端（Windows）
 
-从[最新的发布页](https://github.com/chipfighter/skill-loadout/releases/latest)下载 `Skill.Loadout_<版本>_x64-setup.exe`，运行它。只装给当前用户，不用管理员权限。
+从[最新的发布页](https://github.com/chipfighter/lodestar/releases/latest)下载 `Lodestar_<版本>_x64-setup.exe`，运行它。只装给当前用户，不用管理员权限。
 
 安装包没有代码签名，第一次运行时 Windows SmartScreen 可能提示「未知发布者」：点「更多信息」，再点「仍要运行」。
 
@@ -61,13 +63,13 @@ claude plugin install skill-loadout --marketplace chipfighter/skill-loadout
   - 恢复以前的会话时，沿用它当初锁定的装配，不弹卡片；装这个插件之前的会话，按「不限制」处理。
   - 从现有会话 fork 出来的新会话，沿用原会话的装配，不弹卡片。中途停下后桌面端自动分出来的会话也算 fork。
 - **子代理**：主代理开子代理时，子代理用哪套技能，由插件管理页的「由谁来选」（客户端里是「子代理由谁来选」）决定：
-  - 「主代理」（默认）：主代理在子代理的任务里写一行 `技能装配：Coding`（或 `skill loadout: Coding`），这个子代理就只装这一套；不写就和主会话一样。会话的第一份 skill 清单里会告诉 Claude 这个写法，以及有哪些 Agent 可选。
+  - 「主代理」（默认）：主代理在子代理的任务里写一行 `技能装配：Coding`（也可以写 `skill loadout: Coding` 或 `lodestar: Coding`），这个子代理就只装这一套；不写就和主会话一样。会话的第一份 skill 清单里会告诉 Claude 这个写法，以及有哪些 Agent 可选。
   - 你在消息里直接点名也行，比如"开一个子代理，用 Coding 那套技能……"：主代理没写那一行的话，插件按你消息里点名的那一套给子代理装配（消息里只点名一套时才算）。
   - 子代理开出来后，主代理会收到一句说明，知道这个子代理装的是哪一套。
   - 「我来选」：每开一个子代理都弹卡片问你，主代理建议的排第一，最后一项是「和主会话一样」（子代理的子代理是「和上级代理一样」）。
   - fork 出来的子代理总是沿用上级的装配，不问。
   - 子代理的装配在它开出来时定下，之后不变；它只能用装配给它的 skill（任务里点了名的照常放行）。会话锁定后，面板里能看到每个子代理用的哪一套、是谁选的。
-- **插件的面板**：关掉之后有三种方法打开：点输入框上方「技能装配」状态条里的「打开面板」；输入 `/loadout`；或者直接跟 Claude 说"打开技能装配面板"。状态条只在面板关着的时候出现。面板的「管理」页可以新建、编辑、删除 Agent 和技能组（技能组只能放零碎 skill），设置也在这里。锁定后也能用，修改从下一个新会话起生效。
+- **插件的面板**：关掉之后有三种方法打开：点输入框上方「Lodestar」状态条里的「打开面板」；输入 `/loadout`；或者直接跟 Claude 说"打开 Lodestar 面板"。状态条只在面板关着的时候出现。面板的「管理」页可以新建、编辑、删除 Agent 和技能组（技能组只能放零碎 skill），设置也在这里。锁定后也能用，修改从下一个新会话起生效。
 
 ## 托盘客户端
 

@@ -1,7 +1,7 @@
 export const zh = {
   locale: 'zh-CN',
-  appName: '技能装配',
-  trayOpen: '打开技能装配',
+  appName: 'Lodestar',
+  trayOpen: '打开 Lodestar',
   trayQuit: '退出',
   sample: '示例数据',
   sampleHint: '在浏览器里预览：显示的是示例数据，改动不会写进你的文件。',

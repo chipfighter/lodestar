@@ -149,11 +149,11 @@ fn show_window(app: &AppHandle) {
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "打开 Skill Loadout", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Lodestar", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
     let mut tray = TrayIconBuilder::with_id("main")
-        .tooltip("Skill Loadout")
+        .tooltip("Lodestar")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -210,7 +210,7 @@ fn note_client(app: &AppHandle) {
         .map(|since| since.as_millis() as u64)
         .unwrap_or(0);
     let info = serde_json::json!({
-        "app": "skill-loadout-client",
+        "app": "lodestar",
         "version": app.package_info().version.to_string(),
         "path": std::env::current_exe().map(|exe| exe.to_string_lossy().into_owned()).unwrap_or_default(),
         "startedAt": started,

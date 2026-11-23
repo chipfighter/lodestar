@@ -318,9 +318,9 @@ export function pickOption(answer: string, offered: readonly string[], agents: r
   return longest(offered, label => lower.startsWith(label)) ?? longest([...offered, ...agents], label => lower.includes(label)) ?? null
 }
 
-/** The skill set a subagent's prompt names on a line of its own: `技能装配：<name>`. */
+/** The skill set a subagent's prompt names on a line of its own: `技能装配：<name>`, `skill loadout: <name>` or `lodestar: <name>`. */
 export function markerName(prompt: string): string | null {
-  const found = /^[ \t]*(?:技能装配|skill[ _-]?loadout)[ \t]*[:：][ \t]*(.+?)[ \t]*$/im.exec(prompt)
+  const found = /^[ \t]*(?:技能装配|skill[ _-]?loadout|lodestar)[ \t]*[:：][ \t]*(.+?)[ \t]*$/im.exec(prompt)
   const name = found?.[1]?.replace(/^[「"“『]|[」"”』]$/g, '').trim()
 
   return name === undefined || name === '' ? null : name
@@ -350,7 +350,7 @@ export function subagentBrief(
         `do so whenever the user names a set for the work (e.g. "${asked}"). Without the line the subagent keeps this session's set.`
 
   return (
-    `\n\n(Skill loadout — the user's skill sets for subagents: ${sets}. These sets belong to the Skill Loadout plugin; ` +
+    `\n\n(Skill loadout — the user's skill sets for subagents: ${sets}. These sets belong to the Lodestar plugin (skill-loadout); ` +
     `they are not skills, and ListSkills or SearchSkills will not find them. ${how} A forked subagent always keeps this session's set.)`
   )
 }
@@ -392,7 +392,7 @@ export function spawnedNote(label: string, size: number | null, isPersons: boole
 
   return (
     `Skill loadout: this subagent runs with the skill set "${label}" (${count}), ${why}. ` +
-    'The sets belong to the Skill Loadout plugin; ListSkills and SearchSkills do not know them.'
+    'The sets belong to the Lodestar plugin (skill-loadout); ListSkills and SearchSkills do not know them.'
   )
 }
 

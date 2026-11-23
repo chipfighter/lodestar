@@ -4,8 +4,8 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
 
 export const en: Strings = {
   locale: 'en',
-  appName: 'Skill Loadout',
-  trayOpen: 'Open Skill Loadout',
+  appName: 'Lodestar',
+  trayOpen: 'Open Lodestar',
   trayQuit: 'Quit',
   sample: 'Sample data',
   sampleHint: "Previewing in a browser: this is sample data, and changes aren't written to your files.",

@@ -158,9 +158,9 @@ const spawnedSets = new Map<string, SubLoadout>()
 const LOADOUT_TOOL = {
   name: 'loadout',
   description:
-    'Skill Loadout: action "status" returns the skills this session loads (the person picks an Agent when the ' +
+    'Lodestar (skill loadout): action "status" returns the skills this session loads (the person picks an Agent when the ' +
     "conversation's first message is sent; locked after that), the Agents, the skill groups, where they are " +
-    'stored, and diagnostics; "open" opens the Skill Loadout panel.',
+    'stored, and diagnostics; "open" opens the Lodestar panel, where Agents and skill groups are managed.',
   inputSchema: {
     type: 'object',
     properties: { action: { type: 'string', enum: ['status', 'open'] } },
@@ -1290,9 +1290,9 @@ export const register: Register = on => {
       const opened = await openPane($)
       // The model reads this, and tells the person in their own words.
       const text = opened.isPlaced
-        ? 'The Skill Loadout panel is open.'
+        ? 'The Lodestar panel is open.'
         : `The panel could not be opened (${opened.reason ?? 'the app did not place it'}). The person can press ` +
-          '"Open panel" on the Skill Loadout bar above the prompt, or type /loadout.'
+          '"Open panel" on the Lodestar bar above the prompt, or type /loadout.'
       return { result: text, text }
     }
     const lib = await freshLibrary($)

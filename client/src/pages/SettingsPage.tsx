@@ -27,7 +27,7 @@ import type { Actions, DataState } from '../data/useData'
 import { timeAgo, useStrings } from '../i18n'
 import { PageHeader, Section, SettingRow, useNotify } from '../ui/common'
 
-const REPOSITORY = 'https://github.com/chipfighter/skill-loadout'
+const REPOSITORY = 'https://github.com/chipfighter/lodestar'
 
 const useStyles = makeStyles({
   scroll: { overflowY: 'auto', height: '100%' },

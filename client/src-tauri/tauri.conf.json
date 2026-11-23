@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Skill Loadout",
-  "version": "0.2.0",
-  "identifier": "io.github.chipfighter.skill-loadout",
+  "productName": "Lodestar",
+  "version": "0.2.1",
+  "identifier": "io.github.chipfighter.lodestar",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Skill Loadout",
+        "title": "Lodestar",
         "width": 1100,
         "height": 720,
         "minWidth": 860,

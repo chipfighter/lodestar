@@ -1,12 +1,12 @@
 {
   "name": "skill-loadout",
   "owner": { "name": "chipfighter" },
-  "metadata": { "description": "Pick which skills each Claude Code session loads." },
+  "metadata": { "description": "Lodestar: pick which skills each Claude Code session loads." },
   "plugins": [
     {
       "name": "skill-loadout",
       "source": "./plugin",
-      "description": "Pick a skill set (an Agent) at a new session's first message, and the model sees only that set. Subagents get their own set, and the choice locks after the first turn."
+      "description": "Lodestar: pick a skill set (an Agent) at a new session's first message, and the model sees only that set. Subagents get their own set, and the choice locks after the first turn."
     }
   ]
 }

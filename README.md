@@ -1,4 +1,4 @@
-# skill-loadout
+# Lodestar
 
 English | [简体中文](README.zh-CN.md)
 
@@ -11,6 +11,8 @@ There are two parts:
 
 Both speak Chinese and English.
 
+> Lodestar was called skill-loadout until v0.2.1. The plugin's ID (`skill-loadout`) and its data folder (`~/.skill-loadout`) keep that name, so existing installs and their data carry on as they are.
+
 ![The tray client, showing sample data](docs/client-en.png)
 
 ## Install
@@ -20,20 +22,20 @@ Both speak Chinese and English.
 In the prompt box of a Claude Code session:
 
 ```
-/plugin install skill-loadout --marketplace chipfighter/skill-loadout
+/plugin install skill-loadout --marketplace chipfighter/lodestar
 ```
 
 Or in a terminal:
 
 ```
-claude plugin install skill-loadout --marketplace chipfighter/skill-loadout
+claude plugin install skill-loadout --marketplace chipfighter/lodestar
 ```
 
 Press `y` to add the marketplace, then choose where to install. The plugin applies from the next new session. On its first run it creates `.skill-loadout/library.json` in your home folder, holding two example Agents (see [Defaults](#defaults-loadoutjson)).
 
 ### The tray client (Windows)
 
-Download `Skill.Loadout_<version>_x64-setup.exe` from the [latest release](https://github.com/chipfighter/skill-loadout/releases/latest) and run it. It installs for your user only and needs no administrator rights.
+Download `Lodestar_<version>_x64-setup.exe` from the [latest release](https://github.com/chipfighter/lodestar/releases/latest) and run it. It installs for your user only and needs no administrator rights.
 
 The installer isn't code-signed, so Windows SmartScreen may warn about an unknown publisher the first time: choose **More info**, then **Run anyway**.
 
@@ -61,13 +63,13 @@ Developed and tested in the Claude desktop app on Windows 11, with Claude Code 2
   - A resumed session keeps the set it locked originally, without a card; sessions from before the plugin was installed count as No limit.
   - A session forked from another keeps the original's set, without a card. This includes the session the desktop app splits off on its own after you stop Claude partway.
 - **Subagents.** When the main agent starts a subagent, the setting **Who picks** on the plugin's manage page, or "Who picks a subagent's skills" in the client, decides who chooses the subagent's set:
-  - **Main agent** (the default): the main agent adds a line such as `skill loadout: Coding` (or `技能装配：Coding`) to the subagent's task, and the subagent loads only that set; without the line it gets the main session's set. The session's first skill listing tells Claude about this line and which Agents exist.
+  - **Main agent** (the default): the main agent adds a line such as `skill loadout: Coding` (`lodestar: Coding` and `技能装配：Coding` work too) to the subagent's task, and the subagent loads only that set; without the line it gets the main session's set. The session's first skill listing tells Claude about this line and which Agents exist.
   - You can also name the set in your message, for example "start a subagent with the Coding skills…". If the main agent didn't add the line, the plugin gives the subagent the set your message names, as long as it names exactly one.
   - When the subagent starts, the main agent is told which set it got.
   - **Me**: a card asks you each time a subagent starts. The main agent's suggestion comes first, and the last option keeps the set of the main session (or of the parent agent).
   - A forked subagent always keeps its parent's set, without asking.
   - A subagent's set is fixed when it starts and never changes. It can use only the skills in its set, plus any its task names. Once the session is locked, the panel shows each subagent's set and who chose it.
-- **The plugin's panel.** After you close it, there are three ways to open it again: press **Open panel** on the Skill Loadout bar above the prompt box, type `/loadout`, or ask Claude to open the Skill Loadout panel. The bar shows only while the panel is closed. Its **Manage** page creates, edits and deletes Agents and skill groups (for individually installed skills only), and holds the settings. It works after the lock too; changes apply from the next new session.
+- **The plugin's panel.** After you close it, there are three ways to open it again: press **Open panel** on the Lodestar bar above the prompt box, type `/loadout`, or ask Claude to open the Lodestar panel. The bar shows only while the panel is closed. Its **Manage** page creates, edits and deletes Agents and skill groups (for individually installed skills only), and holds the settings. It works after the lock too; changes apply from the next new session.
 
 ## The tray client
 
