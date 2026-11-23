@@ -12,7 +12,7 @@ import {
   libraryFileText,
   listingDescriptions,
   markerName,
-  moveSkills,
+  setMember,
   normalizeConfig,
   pickOption,
   promptMark,
@@ -304,6 +304,14 @@ test('only loose skills go into groups; the rest keep the group they came in', (
   expect(byId['s:built-in']?.label).toBe('Claude 自带')
   expect(byId['p:figma']?.tag).toBe('插件')
   expect(groupSkills(CATALOG, { 空组: [] }, true).map(group => group.id)).toContain('g:空组')
+
+  // A loose skill may be in several groups; the leftover bucket holds the ones in none.
+  const shared = Object.fromEntries(
+    groupSkills(CATALOG, { 视频: ['image-prompt', 'remotion-*'], 图片: ['image-prompt'] }).map(group => [group.id, group.names]),
+  )
+  expect(shared['g:视频']).toEqual(['image-prompt', 'remotion-render'])
+  expect(shared['g:图片']).toEqual(['image-prompt'])
+  expect(shared['u:']).toEqual(['mine'])
 })
 
 test('an Agent names whole groups by id and single skills by name', () => {
@@ -328,15 +336,16 @@ test('an Agent names whole groups by id and single skills by name', () => {
   })
 })
 
-test('a skill moves in and out of a wildcard group by name', () => {
+test('a skill goes into and out of one group by name, wildcard or not, the others untouched', () => {
   expect(inGroup(['remotion-*', '!remotion-render'], 'remotion-render')).toBe(false)
   expect(withoutSkill(['remotion-*'], 'remotion-render')).toEqual(['remotion-*', '!remotion-render'])
   expect(withSkill(['remotion-*', '!remotion-render'], 'remotion-render')).toEqual(['remotion-*'])
 
-  const moved = moveSkills({ AIGC: ['image-prompt'], 剪辑: ['remotion-*'] }, ['remotion-render'], 'AIGC')
-  expect(moved['AIGC']).toEqual(['image-prompt', 'remotion-render'])
-  expect(moved['剪辑']).toEqual(['remotion-*', '!remotion-render'])
-  expect(moveSkills({ AIGC: ['image-prompt'] }, ['image-prompt'], null)['AIGC']).toEqual([])
+  const added = setMember({ AIGC: ['image-prompt'], 剪辑: ['remotion-*'] }, 'AIGC', 'remotion-render', true)
+  expect(added['AIGC']).toEqual(['image-prompt', 'remotion-render'])
+  expect(added['剪辑']).toEqual(['remotion-*'])
+  expect(Object.keys(added)).toEqual(['AIGC', '剪辑'])
+  expect(setMember({ AIGC: ['image-prompt'] }, 'AIGC', 'image-prompt', false)['AIGC']).toEqual([])
 })
 
 test('renaming and deleting a group keep the Agents that use it working', () => {
@@ -833,6 +842,21 @@ test('a group is made from loose skills only, renamed, and deleted', async ($, o
   await ui.unmount()
 
   expect(fileOf(fake, LIBRARY_PATH)['groups']).toEqual({})
+})
+
+test('a loose skill can be in two groups at once, and each says where else it is', async ($, on) => {
+  const fake = engine(on, { files: { [LIBRARY_PATH]: JSON.stringify({ groups: { 视频: ['image-prompt'] }, agents: {} }) } })
+  await start($)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'manage' })
+  await ui.input({ key: 'new-group', text: '图片' })
+  expect((await ui.find({ key: 'member:image-prompt' }))?.text).toContain('在 视频')
+  await ui.press({ key: 'member:image-prompt' })
+  expect((await ui.find({ key: 'member:image-prompt' }))?.text).toContain('也在 视频')
+  await ui.unmount()
+
+  expect(fileOf(fake, LIBRARY_PATH)['groups']).toEqual({ 视频: ['image-prompt'], 图片: ['image-prompt'] })
 })
 
 test('an Agent is made and edited in its own editor, and the session follows when asked', async ($, on) => {

@@ -9,8 +9,8 @@ export type Model = {
   byName: Map<string, SkillEntry>
   /** Every group: the person's, then the ungrouped loose skills, then one per plugin or source. */
   groups: Group[]
-  /** Each skill's group. */
-  groupOf: Map<string, Group>
+  /** The person's categories each loose skill is in; a skill may be in several, or none. */
+  categoriesOf: Map<string, Group[]>
   /** Skills kept in every set. */
   always: Set<string>
   /** The Agents each skill is in. */
@@ -20,8 +20,11 @@ export type Model = {
 export function buildModel(skills: readonly SkillEntry[], library: Library, alwaysOn: readonly string[]): Model {
   const names = skills.map(skill => skill.name)
   const groups = groupSkills(skills, library.groups, true)
-  const groupOf = new Map<string, Group>()
-  for (const group of groups) for (const name of group.names) groupOf.set(name, group)
+  const categoriesOf = new Map<string, Group[]>()
+  for (const group of groups) {
+    if (group.kind !== 'custom') continue
+    for (const name of group.names) categoriesOf.set(name, [...(categoriesOf.get(name) ?? []), group])
+  }
   const usedBy = new Map<string, string[]>()
   for (const [agent, preset] of Object.entries(library.presets)) {
     for (const name of resolvePreset(preset, groups, names)) usedBy.set(name, [...(usedBy.get(name) ?? []), agent])
@@ -32,7 +35,7 @@ export function buildModel(skills: readonly SkillEntry[], library: Library, alwa
     names,
     byName: new Map(skills.map(skill => [skill.name, skill])),
     groups,
-    groupOf,
+    categoriesOf,
     always: new Set(names.filter(name => matchesAny(alwaysOn, name))),
     usedBy,
   }

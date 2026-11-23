@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { deleteGroup as dropGroup, libraryFileText, moveSkills, renameGroup as renameIn } from '@shared/listing'
+import { deleteGroup as dropGroup, libraryFileText, renameGroup as renameIn, setMember } from '@shared/listing'
 import type { Preset, Prefs } from '../../../plugin/types'
 import { backend, type Backend } from './backend'
 import {
@@ -44,7 +44,7 @@ export type Actions = {
   renameGroup(from: string, to: string): Promise<void>
   /** Deletes a group; Agents that used it list its skills one by one. */
   deleteGroup(label: string, members: readonly string[]): Promise<void>
-  /** Puts a skill in a group, out of the one it was in; or out of the group. */
+  /** Puts a loose skill into a category, or takes it out; the other categories it is in keep it. */
   setGroupMember(label: string, skill: string, isIn: boolean): Promise<void>
   setPrefs(change: Partial<Prefs>): Promise<void>
   resetDefaults(): Promise<void>
@@ -206,7 +206,7 @@ export function useData(): { state: DataState; actions: Actions } {
       setGroupMember: (label, skill, isIn) =>
         mutate(value => ({
           ...value,
-          library: { ...value.library, groups: moveSkills(value.library.groups, [skill], isIn ? label : null) },
+          library: { ...value.library, groups: setMember(value.library.groups, label, skill, isIn) },
         })),
       setPrefs: change => mutate(value => ({ ...value, prefs: { ...value.prefs, ...change } })),
       resetDefaults: () =>

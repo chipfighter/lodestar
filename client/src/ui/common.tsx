@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from 'react'
 
-import { Badge, Body1, Caption1, Subtitle2, Title2, makeStyles, tokens } from '@fluentui/react-components'
+import { Body1, Caption1, Subtitle2, Title2, makeStyles, tokens } from '@fluentui/react-components'
 
 import type { Group } from '@shared/listing'
 import type { Strings } from '../i18n'
@@ -21,26 +21,6 @@ export function groupTitle(group: Group, strings: Strings): string {
   const source = group.id.replace(/^s:/, '')
 
   return strings.sources[source] ?? source
-}
-
-/** The tag beside a group's name: where it came from, when its name does not say. */
-export function GroupTag({ group, strings }: { group: Group; strings: Strings }) {
-  if (group.id.startsWith('p:')) {
-    return (
-      <Badge appearance="tint" color="informative" size="small">
-        {strings.kind.plugin}
-      </Badge>
-    )
-  }
-  if (group.kind === 'custom') {
-    return (
-      <Badge appearance="tint" color="brand" size="small">
-        {strings.kind.custom}
-      </Badge>
-    )
-  }
-
-  return null
 }
 
 const useStyles = makeStyles({

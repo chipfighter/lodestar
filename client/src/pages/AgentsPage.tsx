@@ -30,7 +30,15 @@ import {
   mergeClasses,
   tokens,
 } from '@fluentui/react-components'
-import { Add20Regular, Copy20Regular, Delete20Regular, MoreHorizontal20Regular, Rocket20Regular, Save20Regular } from '@fluentui/react-icons'
+import {
+  Add20Regular,
+  Copy20Regular,
+  Delete20Regular,
+  Info16Regular,
+  MoreHorizontal20Regular,
+  Rocket20Regular,
+  Save20Regular,
+} from '@fluentui/react-icons'
 
 import { MAX_NAME, RESERVED_NAMES } from '@shared/listing'
 import type { Preset } from '../../../plugin/types'
@@ -129,6 +137,8 @@ const useStyles = makeStyles({
   more: { marginLeft: 'auto' },
   filters: { display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' },
   search: { flexGrow: 1, maxWidth: '420px', minWidth: '200px' },
+  legend: { display: 'flex', alignItems: 'flex-start', gap: '6px', color: tokens.colorNeutralForeground3 },
+  legendIcon: { flexShrink: 0, marginTop: '2px' },
   pickerScroll: { flexGrow: 1, overflowY: 'auto', padding: '0 20px', borderTop: `1px solid ${tokens.colorNeutralStroke3}`, minHeight: 0 },
   footer: {
     display: 'flex',
@@ -354,6 +364,10 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
                     onChange={(_, data) => setQuery(data.value)}
                   />
                   <Switch label={t.onlySelected} checked={isOnlySelected} onChange={(_, data) => setIsOnlySelected(data.checked)} />
+                </div>
+                <div className={styles.legend}>
+                  <Info16Regular className={styles.legendIcon} />
+                  <Caption1>{strings.picker.legend}</Caption1>
                 </div>
               </div>
               <div className={styles.pickerScroll}>

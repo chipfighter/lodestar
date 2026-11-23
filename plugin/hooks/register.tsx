@@ -47,7 +47,7 @@ import {
   markerName,
   matchesAny,
   mergeSeen,
-  moveSkills,
+  setMember,
   normalizeConfig,
   pickOption,
   promptMark,
@@ -963,12 +963,12 @@ async function openGroupEditor($: EngineInterface, label: string): Promise<void>
   await go($, 'group')
 }
 
-/** Puts a loose skill into the group, out of any other; or out of the group when it is in. */
+/** Puts a loose skill into the group, or takes it out when it is in; the other groups keep it as they have it. */
 async function toggleGroupMember($: EngineInterface, label: string, name: string): Promise<void> {
   const lib = await freshLibrary($)
   const group = (await groupsNow($, true)).find(one => one.id === `g:${label}`)
   const isMember = group?.names.includes(name) ?? false
-  await saveLibrary($, { ...lib, groups: moveSkills(lib.groups, [name], isMember ? null : label) })
+  await saveLibrary($, { ...lib, groups: setMember(lib.groups, label, name, !isMember) })
 }
 
 async function renameGroupTo($: EngineInterface, from: string, raw: string): Promise<void> {
@@ -1785,10 +1785,10 @@ export const register: Register = on => {
         )
       }
       const loose = skills.filter(isLoose).map(skill => skill.name)
-      const homeOf = new Map(
-        groupsAll.filter(one => one.kind === 'custom').flatMap(one => one.names.map(name => [name, one.label] as const)),
-      )
-      const rank = (name: string): number => (group.names.includes(name) ? 0 : homeOf.has(name) ? 2 : 1)
+      // The person's other groups each loose skill is in; a skill may be in several.
+      const elsewhere = (name: string): string[] =>
+        groupsAll.filter(one => one.kind === 'custom' && one.label !== label && one.names.includes(name)).map(one => one.label)
+      const rank = (name: string): number => (group.names.includes(name) ? 0 : elsewhere(name).length > 0 ? 2 : 1)
       const ordered = [...loose].sort((a, b) => rank(a) - rank(b))
       const deleteKey = `group:${label}`
       const isPending = pending === deleteKey
@@ -1805,13 +1805,13 @@ export const register: Register = on => {
             {loose.length === 0 && <Text dimColor>{p.noLoose}</Text>}
             {ordered.map(name => {
               const isMember = group.names.includes(name)
-              const home = homeOf.get(name)
+              const others = elsewhere(name).join(t.summary.sep)
 
               return (
                 <Button key={`member:${name}`} plain dimColor={!isMember} onPress={() => toggleGroupMember($, label, name)}>
                   {isMember ? '☑  ' : '☐  '}
                   {name}
-                  <Text dimColor>{!isMember && home !== undefined ? p.inGroup(home) : ''}</Text>
+                  <Text dimColor>{others === '' ? '' : isMember ? p.alsoIn(others) : p.inGroup(others)}</Text>
                 </Button>
               )
             })}

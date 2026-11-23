@@ -101,7 +101,8 @@ export type Words = {
     members: (count: number) => string
     membersHint: string
     noLoose: string
-    inGroup: (name: string) => string
+    inGroup: (names: string) => string
+    alsoIn: (names: string) => string
     deleteGroup: string
     deleteGroupConfirm: string
     manage: string
@@ -268,9 +269,10 @@ const zh: Words = {
     editGroup: '编辑技能组',
     nameHint: '改完按回车',
     members: count => `成员 ${count} 个`,
-    membersHint: '勾选零碎装的 skill 放进这个组。一个 skill 只能在一个组里，勾选会把它从原来的组移过来',
+    membersHint: '勾选零碎装的 skill 放进这个组。一个 skill 可以同时放进几个组',
     noLoose: '没有零碎装的 skill',
-    inGroup: name => `  在 ${name}`,
+    inGroup: names => `  在 ${names}`,
+    alsoIn: names => `  也在 ${names}`,
     deleteGroup: '删除这个技能组',
     deleteGroupConfirm: '确认删除这个技能组？再点一次',
     manage: '管理',
@@ -439,9 +441,10 @@ const en: Words = {
     editGroup: 'Edit skill group',
     nameHint: 'Press Enter when done',
     members: count => plural(count, 'member', 'members'),
-    membersHint: 'Tick individually installed skills to put them in this group. A skill can be in one group only; ticking it moves it here',
+    membersHint: 'Tick individually installed skills to put them in this group. A skill can be in several groups',
     noLoose: 'No individually installed skills',
-    inGroup: name => `  in ${name}`,
+    inGroup: names => `  in ${names}`,
+    alsoIn: names => `  also in ${names}`,
     deleteGroup: 'Delete this group',
     deleteGroupConfirm: 'Delete this group? Press again',
     manage: 'Manage',

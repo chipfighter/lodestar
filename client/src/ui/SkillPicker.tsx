@@ -1,15 +1,17 @@
 import { useMemo, useState } from 'react'
 
 import { Badge, Body1, Body1Strong, Caption1, Checkbox, Tooltip, makeStyles, mergeClasses, tokens } from '@fluentui/react-components'
-import { ChevronDown16Regular, ChevronRight16Regular } from '@fluentui/react-icons'
+import { ChevronDown16Regular, ChevronRight16Regular, Folder16Regular } from '@fluentui/react-icons'
 
 import type { Group } from '@shared/listing'
 import { formatTokens, matchesSearch, tokensOf, type Model } from '../data/model'
 import { useStrings } from '../i18n'
-import { GroupTag, groupTitle } from './common'
+import { groupTitle } from './common'
 
 const useStyles = makeStyles({
   list: { display: 'flex', flexDirection: 'column', gap: '6px', padding: '4px 0 16px' },
+  sectionLabel: { padding: '10px 4px 2px', color: tokens.colorNeutralForeground3 },
+  folder: { color: tokens.colorBrandForeground1, flexShrink: 0 },
   group: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke3}`,
@@ -118,40 +120,57 @@ export function SkillPicker({ model, selected, onChange, query, isOnlySelected }
     onChange(next)
   }
 
+  const row = ({ group, names }: { group: Group; names: string[] }) => {
+    const own = group.names.filter(name => !model.always.has(name))
+    const picked = own.filter(name => selected.has(name)).length
+    const state: boolean | 'mixed' = picked === 0 ? false : picked === own.length ? true : 'mixed'
+    const loaded = group.names.filter(name => selected.has(name) || model.always.has(name))
+    const isOpenByDefault = isFiltering || state === 'mixed'
+    const isOpen = toggled.has(group.id) ? !isOpenByDefault : isOpenByDefault
+    const title = groupTitle(group, strings)
+
+    return (
+      <div key={group.id} className={styles.group}>
+        <div className={styles.groupHeader}>
+          <Checkbox
+            checked={state}
+            disabled={own.length === 0}
+            aria-label={title}
+            onChange={(_, data) => setMany(own, data.checked === true)}
+          />
+          <button type="button" className={styles.expander} aria-expanded={isOpen} onClick={() => toggleOpen(group.id)}>
+            {isOpen ? <ChevronDown16Regular className={styles.chevron} /> : <ChevronRight16Regular className={styles.chevron} />}
+            {group.kind === 'custom' ? <Folder16Regular className={styles.folder} /> : null}
+            <Body1Strong className={styles.groupName}>{title}</Body1Strong>
+            {/* Uncategorized isn't a group an Agent can name, so ticking all of it picks those skills one by one. */}
+            {state === true && group.kind !== 'ungrouped' ? (
+              <Tooltip content={strings.picker.wholeHint} relationship="description">
+                <Badge appearance="tint" color="brand" size="small">
+                  {strings.picker.whole}
+                </Badge>
+              </Tooltip>
+            ) : null}
+            <Caption1 className={styles.count}>
+              {state === 'mixed'
+                ? strings.picker.some(loaded.length, group.names.length)
+                : strings.ofTotal(loaded.length, group.names.length)}
+              {loaded.length > 0 ? ` · ${strings.tokens(formatTokens(tokensOf(model, loaded)))}` : ''}
+            </Caption1>
+          </button>
+        </div>
+        {isOpen ? <GroupSkills group={group} names={names} model={model} selected={selected} onSet={setMany} /> : null}
+      </div>
+    )
+  }
+  const loose = shown.filter(one => one.group.kind !== 'fixed')
+  const fixed = shown.filter(one => one.group.kind === 'fixed')
+
   return (
     <div className={styles.list}>
-      {shown.map(({ group, names }) => {
-        const own = group.names.filter(name => !model.always.has(name))
-        const picked = own.filter(name => selected.has(name)).length
-        const state: boolean | 'mixed' = picked === 0 ? false : picked === own.length ? true : 'mixed'
-        const loaded = group.names.filter(name => selected.has(name) || model.always.has(name))
-        const isOpenByDefault = isFiltering || state === 'mixed'
-        const isOpen = toggled.has(group.id) ? !isOpenByDefault : isOpenByDefault
-        const title = groupTitle(group, strings)
-
-        return (
-          <div key={group.id} className={styles.group}>
-            <div className={styles.groupHeader}>
-              <Checkbox
-                checked={state}
-                disabled={own.length === 0}
-                aria-label={title}
-                onChange={(_, data) => setMany(own, data.checked === true)}
-              />
-              <button type="button" className={styles.expander} aria-expanded={isOpen} onClick={() => toggleOpen(group.id)}>
-                {isOpen ? <ChevronDown16Regular className={styles.chevron} /> : <ChevronRight16Regular className={styles.chevron} />}
-                <Body1Strong className={styles.groupName}>{title}</Body1Strong>
-                <GroupTag group={group} strings={strings} />
-                <Caption1 className={styles.count}>
-                  {strings.ofTotal(loaded.length, group.names.length)}
-                  {loaded.length > 0 ? ` · ${strings.tokens(formatTokens(tokensOf(model, loaded)))}` : ''}
-                </Caption1>
-              </button>
-            </div>
-            {isOpen ? <GroupSkills group={group} names={names} model={model} selected={selected} onSet={setMany} /> : null}
-          </div>
-        )
-      })}
+      {loose.length > 0 ? <Caption1 className={styles.sectionLabel}>{strings.picker.sections.loose}</Caption1> : null}
+      {loose.map(row)}
+      {fixed.length > 0 ? <Caption1 className={styles.sectionLabel}>{strings.picker.sections.fixed}</Caption1> : null}
+      {fixed.map(row)}
     </div>
   )
 }
@@ -178,6 +197,11 @@ function GroupSkills({
         const skill = model.byName.get(name)
         const isAlways = model.always.has(name)
         const isOn = isAlways || selected.has(name)
+        // A loose skill in several categories shows under each; ticking it here ticks it there too.
+        const elsewhere =
+          group.kind === 'custom'
+            ? (model.categoriesOf.get(name) ?? []).filter(one => one.id !== group.id).map(one => one.label)
+            : []
         // A plugin's skills show their own name; the plugin is the group.
         const shownName = group.id.startsWith('p:') && name.includes(':') ? name.slice(name.indexOf(':') + 1) : name
 
@@ -195,6 +219,11 @@ function GroupSkills({
                       {strings.kind.alwaysOn}
                     </Badge>
                   </Tooltip>
+                ) : null}
+                {elsewhere.length > 0 ? (
+                  <Badge appearance="outline" color="informative" size="small">
+                    {strings.library.alsoIn(elsewhere.join(strings.listSep))}
+                  </Badge>
                 ) : null}
               </div>
               {skill?.description ? (

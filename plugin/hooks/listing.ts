@@ -103,22 +103,16 @@ export function withoutSkill(patterns: readonly string[], name: string): string[
   return inGroup(kept, name) ? [...kept, `!${name}`] : kept
 }
 
-/** Puts `names` into `target` and out of every other group; a null target only takes them out. */
-export function moveSkills(
+/** Puts a loose skill into one group, or takes it out; a skill may be in several groups, so the others stay as they are. */
+export function setMember(
   groups: Record<string, string[]>,
-  names: readonly string[],
-  target: string | null,
+  label: string,
+  name: string,
+  isIn: boolean,
 ): Record<string, string[]> {
-  const out: Record<string, string[]> = {}
-  for (const [label, patterns] of Object.entries(groups)) {
-    out[label] = names.reduce(
-      (list, name) => (label === target ? withSkill(list, name) : withoutSkill(list, name)),
-      patterns,
-    )
-  }
-  if (target !== null && !(target in out)) out[target] = names.reduce(withSkill, [] as string[])
+  const patterns = groups[label] ?? []
 
-  return out
+  return { ...groups, [label]: isIn ? withSkill(patterns, name) : withoutSkill(patterns, name) }
 }
 
 /** Renames a group, in the Agents that use it too; the group keeps its place. */
@@ -158,7 +152,7 @@ export function deleteGroup(library: Library, label: string, members: readonly s
 
 /**
  * The groups the panel shows: the person's groups of loose skills first (a
- * skill in the first that takes it), then the loose skills left over, then the
+ * skill may be in several), then the loose skills in none of them, then the
  * skills that came together, one group per plugin or source. Only loose skills
  * go in the person's groups. An empty group of theirs shows with `isEmptyShown`.
  */
@@ -173,7 +167,7 @@ export function groupSkills(
   const assigned = new Set<string>()
   const custom: Group[] = []
   for (const [label, patterns] of Object.entries(library)) {
-    const members = loose.filter(name => !assigned.has(name) && inGroup(patterns, name))
+    const members = loose.filter(name => inGroup(patterns, name))
     members.forEach(name => assigned.add(name))
     if (members.length > 0 || isEmptyShown) custom.push({ id: `g:${label}`, label, names: members, kind: 'custom' })
   }

@@ -20,12 +20,12 @@ import {
   webLightTheme,
 } from '@fluentui/react-components'
 import {
+  Library24Filled,
+  Library24Regular,
   PeopleTeam24Filled,
   PeopleTeam24Regular,
   Settings24Filled,
   Settings24Regular,
-  TagMultiple24Filled,
-  TagMultiple24Regular,
   bundleIcon,
 } from '@fluentui/react-icons'
 
@@ -34,26 +34,26 @@ import { buildModel } from './data/model'
 import { useData } from './data/useData'
 import { StringsContext, stringsFor } from './i18n'
 import { AgentsPage } from './pages/AgentsPage'
-import { GroupsPage } from './pages/GroupsPage'
+import { LibraryPage } from './pages/LibraryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { AppIcon } from './ui/AppIcon'
 import { NotifyContext, type Notify } from './ui/common'
 
 const AgentsIcon = bundleIcon(PeopleTeam24Filled, PeopleTeam24Regular)
-const GroupsIcon = bundleIcon(TagMultiple24Filled, TagMultiple24Regular)
+const LibraryIcon = bundleIcon(Library24Filled, Library24Regular)
 const SettingsIcon = bundleIcon(Settings24Filled, Settings24Regular)
 
-type Page = 'agents' | 'groups' | 'settings'
+type Page = 'agents' | 'library' | 'settings'
 
-const PAGES: readonly Page[] = ['agents', 'groups', 'settings']
+const PAGES: readonly Page[] = ['agents', 'library', 'settings']
 
 /** A screenshot for the README (`?shot`): the sample-data tag stays out of the picture. */
 const IS_SHOT = new URLSearchParams(window.location.search).has('shot')
 
-/** The page a link names (`#groups`), so that each page can be opened directly. */
+/** The page a link names (`#library`), so that each page can be opened directly; `#groups` is its old name. */
 function pageFromHash(): Page {
   const named = window.location.hash.replace(/^#/, '')
-  return PAGES.find(page => page === named) ?? 'agents'
+  return PAGES.find(page => page === named) ?? (named === 'groups' ? 'library' : 'agents')
 }
 
 // The provider's own class is copied onto its pop-up layers (tooltips, toasts), so the page's
@@ -148,8 +148,8 @@ export function App() {
                 <Tab value="agents" icon={<AgentsIcon />}>
                   {strings.nav.agents}
                 </Tab>
-                <Tab value="groups" icon={<GroupsIcon />}>
-                  {strings.nav.groups}
+                <Tab value="library" icon={<LibraryIcon />}>
+                  {strings.nav.library}
                 </Tab>
                 <Tab value="settings" icon={<SettingsIcon />}>
                   {strings.nav.settings}
@@ -171,8 +171,8 @@ export function App() {
                 <Spinner className={styles.loading} />
               ) : page === 'agents' ? (
                 <AgentsPage state={state} actions={actions} model={model} />
-              ) : page === 'groups' ? (
-                <GroupsPage state={state} actions={actions} model={model} />
+              ) : page === 'library' ? (
+                <LibraryPage state={state} actions={actions} model={model} />
               ) : (
                 <SettingsPage state={state} actions={actions} />
               )}
