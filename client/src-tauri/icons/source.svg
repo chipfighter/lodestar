@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Lodestar: a disc with its upper-right quarter taken out, so the cut's two straight edges
-       meet as an L, and the guiding star set where the quarter was. -->
-  <path d="M512 512 L512 194 A318 318 0 1 0 830 512 Z" fill="#4542E8"/>
-  <path d="M700 188 C728.5 284.6 739.4 295.5 836 324 C739.4 352.5 728.5 363.4 700 460 C671.5 363.4 660.6 352.5 564 324 C660.6 295.5 671.5 284.6 700 188 Z" fill="#F6B22E"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
+  <title>Lodestar</title>
+  <!-- Lodestar app icon: star trails round the lodestar, on an ink tile. 64 px and up; source-small.svg draws 16-48 px. -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#16161D"/>
+  <path d="M140.58 70.35 A55.5 55.5 0 0 1 102.62 174.65 A10.1 10.1 0 0 1 109.53 155.67 A35.3 35.3 0 0 0 133.67 89.33 A10.1 10.1 0 0 1 140.58 70.35 Z" fill="#F4EFE6"/><path d="M153.24 35.58 A92.5 92.5 0 1 1 34.68 154.14 A10.1 10.1 0 0 1 53.66 147.23 A72.3 72.3 0 1 0 146.33 54.56 A10.1 10.1 0 0 1 153.24 35.58 Z" fill="#F4EFE6"/><circle cx="121.6" cy="122.5" r="18.5" fill="#FF5A36"/>
 </svg>

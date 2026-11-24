@@ -1,15 +1,18 @@
 <div align="center">
 
-<img src="docs/logo.svg" width="104" alt="Lodestar logo">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+  <img src="docs/logo.svg" width="104" alt="Lodestar logo">
+</picture>
 
 # Lodestar
 
 **Choose which skills each Claude Code session loads — and only those.**
 
-[![Release](https://img.shields.io/github/v/release/chipfighter/lodestar?label=release&color=4542E8)](https://github.com/chipfighter/lodestar/releases/latest)
-[![License: MIT](https://img.shields.io/badge/license-MIT-4542E8)](LICENSE)
-[![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-F6B22E)](#install)
-[![Windows client](https://img.shields.io/badge/client-Windows-F6B22E)](#install)
+[![Release](https://img.shields.io/github/v/release/chipfighter/lodestar?label=release&color=16161D)](https://github.com/chipfighter/lodestar/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-16161D)](LICENSE)
+[![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-FF5A36)](#install)
+[![Windows client](https://img.shields.io/badge/client-Windows-FF5A36)](#install)
 
 English · [简体中文](README.zh-CN.md)
 

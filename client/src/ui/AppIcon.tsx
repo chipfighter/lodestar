@@ -1,15 +1,18 @@
+import { tokens } from '@fluentui/react-components'
+
 /**
- * The Lodestar mark: a disc missing its upper-right quarter, the cut's two straight edges an L,
- * and the guiding star where the quarter was. The same drawing as src-tauri/icons/source.svg.
+ * The Lodestar mark: star trails. In a long exposure every star draws an arc around the one
+ * that stays still, the lodestar. The same drawing as docs/logo.svg; the arcs take the text
+ * colour, so the mark reads in light and dark themes.
  */
 export function AppIcon({ size = 28 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 1024 1024" aria-hidden="true">
-      <path d="M512 512 L512 194 A318 318 0 1 0 830 512 Z" fill="#4542E8" />
-      <path
-        d="M700 188 C728.5 284.6 739.4 295.5 836 324 C739.4 352.5 728.5 363.4 700 460 C671.5 363.4 660.6 352.5 564 324 C660.6 295.5 671.5 284.6 700 188 Z"
-        fill="#F6B22E"
-      />
+    <svg width={size} height={size} viewBox="0 0 256 256" aria-hidden="true">
+      <g style={{ fill: tokens.colorNeutralForeground1 }}>
+        <path d="M144.77 60.88 A66 66 0 0 1 99.63 184.92 A12 12 0 0 1 107.84 162.37 A42 42 0 0 0 136.56 83.43 A12 12 0 0 1 144.77 60.88 Z" />
+        <path d="M159.82 19.53 A110 110 0 1 1 18.83 160.52 A12 12 0 0 1 41.39 152.31 A86 86 0 1 0 151.61 42.09 A12 12 0 0 1 159.82 19.53 Z" />
+      </g>
+      <circle cx="122.2" cy="122.9" r="22" fill="#FF5A36" />
     </svg>
   )
 }
