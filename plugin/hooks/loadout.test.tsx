@@ -1310,7 +1310,20 @@ test('changes keep what a category or an Agent already had, and say which Agents
   ])
 })
 
-test("an Agent's skills Claude Code doesn't have (Codex's) stay in it when the tool saves it", () => {
+test("Codex's own Agents and categories stay as they are when Claude Code's change, and Claude sees only Claude Code's", async ($, on) => {
+  const platforms = { codex: { groups: { 代码: ['sql-*'] }, agents: { Coding: { groups: ['g:代码'], skills: ['pr-triage'] } } } }
+  const fake = engine(on, { answers: ['保存'], files: { [LIBRARY_PATH]: JSON.stringify({ ...LIBRARY, platforms }) } })
+  await start($)
+  const listed = await loadout($, { action: 'list' })
+  expect(listed.text).toContain('只要图片')
+  expect(listed.text).not.toContain('pr-triage')
+  await loadout($, { action: 'save', agents: { 剪辑: { groups: [], skills: ['code-review'] } } })
+  const file = fileOf(fake, LIBRARY_PATH)
+  expect(Object.keys(file['agents'] as object)).toEqual(['只要图片', '设计', '剪辑'])
+  expect(file['platforms']).toEqual(platforms)
+})
+
+test("an Agent's skills the session doesn't list stay in it when the tool saves it", () => {
   const library = { groups: {}, presets: { 视频制作: { groups: ['p:documents', 'g:图'], skills: ['pr-triage', 'image-prompt'] } } }
   const saved = applyChanges(library, { agents: { 视频制作: { groups: [], skills: ['image-prompt', 'code-review'] } } }, CATALOG)
   expect(saved.problems).toEqual([])

@@ -39,12 +39,14 @@ import {
   Rename20Regular,
 } from '@fluentui/react-icons'
 
-import { MAX_NAME, plainName, type Group } from '@shared/listing'
-import { matchesSearch, type Model } from '../data/model'
+import { MAX_NAME, categoryCopies, plainName, type Group } from '@shared/listing'
+import { libraryOf } from '../data/files'
+import { availablePlatforms, matchesSearch, type Model } from '../data/model'
 import { NameTakenError, type Actions, type DataState } from '../data/useData'
 import { useStrings } from '../i18n'
 import { PageHeader, groupTitle, useNotify } from '../ui/common'
-import { usePlatform } from '../ui/platform'
+import { CopyMenu, platformName } from '../ui/CopyMenu'
+import { usePlatform, type Platform } from '../ui/platform'
 
 const useStyles = makeStyles({
   page: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 },
@@ -53,6 +55,8 @@ const useStyles = makeStyles({
   scroll: { flexGrow: 1, minHeight: 0, overflowY: 'auto', padding: '0 32px 24px' },
   section: { display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '1000px', marginBottom: '24px' },
   sectionHead: { display: 'flex', flexDirection: 'column', gap: '2px', padding: '0 4px' },
+  sectionHeadRow: { display: 'flex', alignItems: 'flex-end', gap: '12px', justifyContent: 'space-between' },
+  sectionHeadText: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 },
   hint: { color: tokens.colorNeutralForeground3 },
   card: {
     backgroundColor: tokens.colorNeutralBackground1,
@@ -139,17 +143,21 @@ export function LibraryPage({ state, actions, model }: { state: DataState; actio
   const strings = useStrings()
   const t = strings.library
   const notify = useNotify()
-  const isCodex = usePlatform() === 'codex'
+  const platform = usePlatform()
+  const isCodex = platform === 'codex'
   const [query, setQuery] = useState('')
-  // Categories and the uncategorized skills open by themselves, plugins and the rest closed; a click flips one.
-  const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set())
+  // Every group starts closed, and a click opens one. A search opens the groups with matches; a click
+  // closes one of those until the search is cleared.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set())
+  const [closedInSearch, setClosedInSearch] = useState<ReadonlySet<string>>(new Set())
   const [newName, setNewName] = useState('')
   const [createError, setCreateError] = useState<string | undefined>()
   const [renaming, setRenaming] = useState<Renaming | null>(null)
   const [deleting, setDeleting] = useState<Group | null>(null)
 
   const isSearching = query.trim() !== ''
-  const presets = state.value.library.presets
+  // This platform's own Agents and categories.
+  const presets = model.library.presets
   const categories = model.groups.filter(group => group.kind === 'custom')
 
   const shownOf = (groups: readonly Group[]): Shown[] =>
@@ -165,31 +173,56 @@ export function LibraryPage({ state, actions, model }: { state: DataState; actio
   const loose = shownOf(model.groups.filter(group => group.kind !== 'fixed'))
   const fixed = shownOf(model.groups.filter(group => group.kind === 'fixed'))
 
-  const isOpen = (group: Group): boolean => {
-    const byDefault = isSearching || group.kind !== 'fixed'
-    return toggled.has(group.id) ? !byDefault : byDefault
+  const isOpen = (group: Group): boolean => (isSearching ? !closedInSearch.has(group.id) : opened.has(group.id))
+  const flip = (old: ReadonlySet<string>, id: string): ReadonlySet<string> => {
+    const next = new Set(old)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
   }
-  const toggle = (id: string): void =>
-    setToggled(old => {
-      const next = new Set(old)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  const toggle = (id: string): void => (isSearching ? setClosedInSearch : setOpened)(old => flip(old, id))
+  const search = (text: string): void => {
+    setQuery(text)
+    if (text.trim() === '') setClosedInSearch(new Set())
+  }
   const wholeUsers = (group: Group): string[] =>
     Object.entries(presets)
       .filter(([, preset]) => preset.groups.includes(group.id))
       .map(([name]) => name)
 
+  // The other platforms' categories this one lacks, to copy here: each with how many of its skills this platform has.
+  const categorySources = availablePlatforms(state.codex.info)
+    .filter(other => other !== platform)
+    .map(from => ({
+      from,
+      items: categoryCopies(libraryOf(state.value, from), model.library, model.skills).map(one => ({
+        name: one.label,
+        size: one.size,
+        isHere: false,
+      })),
+    }))
+    .filter(source => source.items.length > 0)
+
+  const copyCategories = async (from: Platform, labels: string[]): Promise<void> => {
+    try {
+      const count = await actions.copyCategories(from, labels)
+      if (count > 0) notify(t.copiedCategories(count, platformName(from)))
+    } catch (error) {
+      notify(String(error), 'error')
+    }
+  }
+
   const create = async (): Promise<void> => {
     const name = cleanName(newName)
     if (name === '') return
-    if (name in state.value.library.groups) {
+    if (name in model.library.groups) {
       setCreateError(t.taken(name))
       return
     }
     try {
       await actions.createGroup(name)
+      // A new category opens, with its hint on how to put skills in it.
+      setOpened(old => new Set(old).add(`g:${name}`))
       notify(t.created(name))
       setNewName('')
       setCreateError(undefined)
@@ -206,7 +239,7 @@ export function LibraryPage({ state, actions, model }: { state: DataState; actio
       setRenaming(null)
       return
     }
-    if (to in state.value.library.groups) {
+    if (to in model.library.groups) {
       setRenaming({ ...renaming, error: t.taken(to) })
       return
     }
@@ -410,15 +443,30 @@ export function LibraryPage({ state, actions, model }: { state: DataState; actio
     <div className={styles.page}>
       <PageHeader title={t.title} intro={isCodex ? t.introCodex : t.intro} />
       <div className={styles.toolbar}>
-        <SearchBox className={styles.search} placeholder={t.search} value={query} onChange={(_, data) => setQuery(data.value)} />
+        <SearchBox className={styles.search} placeholder={t.search} value={query} onChange={(_, data) => search(data.value)} />
       </div>
       <div className={styles.scroll}>
         {isSearching && loose.length === 0 && fixed.length === 0 ? <Body1 className={styles.noMatch}>{t.noMatch}</Body1> : null}
         {loose.length > 0 || !isSearching ? (
           <section className={styles.section}>
-            <div className={styles.sectionHead}>
-              <Subtitle2 as="h2">{t.loose}</Subtitle2>
-              <Caption1 className={styles.hint}>{t.looseHint}</Caption1>
+            <div className={styles.sectionHeadRow}>
+              <div className={styles.sectionHeadText}>
+                <Subtitle2 as="h2">{t.loose}</Subtitle2>
+                <Caption1 className={styles.hint}>{t.looseHint}</Caption1>
+              </div>
+              {isSearching
+                ? null
+                : categorySources.map(source => (
+                    <CopyMenu
+                      key={source.from}
+                      from={source.from}
+                      to={platform}
+                      label={strings.copyCategoriesFrom(platformName(source.from))}
+                      items={source.items}
+                      appearance="subtle"
+                      onCopy={labels => void copyCategories(source.from, labels)}
+                    />
+                  ))}
             </div>
             <div className={styles.card}>
               {loose.map(block)}

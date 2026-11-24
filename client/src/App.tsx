@@ -30,7 +30,7 @@ import {
 } from '@fluentui/react-icons'
 
 import { backend } from './data/backend'
-import { buildModel } from './data/model'
+import { availablePlatforms, platformModel } from './data/model'
 import { useData } from './data/useData'
 import { StringsContext, stringsFor } from './i18n'
 import { AgentsPage } from './pages/AgentsPage'
@@ -94,7 +94,7 @@ function useSystemDark(): boolean {
 export function App() {
   const styles = useStyles()
   const isDark = useSystemDark()
-  const { state, actions } = useData()
+  const { state, actionsFor } = useData()
   const [page, setPage] = useState<Page>(pageFromHash)
   useEffect(() => {
     const followed = (): void => setPage(pageFromHash())
@@ -104,20 +104,18 @@ export function App() {
   const strings = stringsFor(state.value.prefs.language, navigator.language)
   // Codex can be picked only where it is installed.
   const [chosen, setChosen] = useState<Platform>(initialPlatform)
-  const hasCodex = state.codex.info != null
-  const available = useMemo(() => new Set<Platform>(hasCodex ? ['claude', 'codex'] : ['claude']), [hasCodex])
+  const codexInfo = state.codex.info
+  const available = useMemo(() => new Set<Platform>(availablePlatforms(codexInfo)), [codexInfo])
   const platform: Platform = available.has(chosen) ? chosen : 'claude'
+  // The pages show and change the chosen platform's own Agents and categories.
+  const actions = useMemo(() => actionsFor(platform), [actionsFor, platform])
   const choosePlatform = useCallback((next: Platform) => {
     setChosen(next)
     rememberPlatform(next)
   }, [])
-  const model = useMemo(() => {
-    if (platform === 'claude') return buildModel(state.catalog.skills, state.value.library, state.catalog.alwaysOn)
-    // What the person switched off in Codex themselves; Lodestar's own switches come and go with the Agent.
-    const ours = new Set(state.codex.record?.names ?? [])
-    const off = state.codex.off.filter(name => !ours.has(name))
-    return buildModel(state.codex.catalog.skills, state.value.library, state.codex.catalog.alwaysOn, off)
-  }, [platform, state.catalog, state.value.library, state.codex.catalog, state.codex.off, state.codex.record])
+  const { catalog, value, codex } = state
+  // The model reads only these parts of the state.
+  const model = useMemo(() => platformModel(state, platform), [platform, catalog, value, codex.catalog, codex.off, codex.record])
   const toasterId = useId('toaster')
   const { dispatchToast } = useToastController(toasterId)
   const notify = useCallback<Notify>(
@@ -185,9 +183,9 @@ export function App() {
               {!state.isReady ? (
                 <Spinner className={styles.loading} />
               ) : page === 'agents' ? (
-                <AgentsPage state={state} actions={actions} model={model} />
+                <AgentsPage key={platform} state={state} actions={actions} model={model} />
               ) : page === 'library' ? (
-                <LibraryPage state={state} actions={actions} model={model} />
+                <LibraryPage key={platform} state={state} actions={actions} model={model} />
               ) : (
                 <SettingsPage state={state} actions={actions} />
               )}

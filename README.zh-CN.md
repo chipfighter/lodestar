@@ -28,7 +28,7 @@ Claude Code 会把你装的所有 skill 都列给模型，每个会话都是。L
 - **一个会话一套**：会话开始后就锁定；临时要多用一个 skill，在消息里写出它的名字就行。
 - **说一声就能整理**：跟 Claude 说「帮我把 skill 分好类」或者「建一个做视频的 Agent」，它会看过你所有的 skill、说出打算怎么改，你在卡片上确认后才保存。
 - **子代理也管**：每个子代理可以有自己的一套；fork 出来的沿用上级的。
-- **Codex 也能用**：在客户端里给 Codex 选一个 Agent，之后新开的 Codex 会话就只看到这一套。Agent 和分类都和 Claude Code 共用。
+- **Codex 也能用**：Codex 在客户端里有自己的一套 Agent 和分类；选一个，之后新开的 Codex 会话就只看到这一套。可以从 Claude Code 复制一个过来起步。
 - **Windows 托盘客户端**：随时编辑 Agent、查看手上所有的 skill，给下一个 Claude Code 会话临时调一套，还能切换 Codex 用哪套。
 - **中文和英文**：插件和客户端都支持。
 
@@ -72,17 +72,17 @@ Claude Code 会把你装的所有 skill 都列给模型，每个会话都是。L
 Codex 没法在第一条消息时弹卡片问你，所以要在开会话之前选好。这要用到托盘客户端。
 
 1. **在客户端左上角的下拉框里选 Codex**。装了 Codex（桌面版或命令行版）才会出现。
-2. **打开一个 Agent，点「Codex 用这个」。**
-3. **新开 Codex 会话**：它只看到这一套，直到你换别的 Agent；已经开着的会话不受影响。点「改成不限制」就回到全部 skill。
+2. **给 Codex 建 Agent**：点「新建 Agent」，或者「从 Claude Code 复制 Agent…」拿你已有的改。复制只带过来 Codex 也装了的 skill，不会替你装 skill。Codex 的 Agent 和分类是它自己的，改了不影响 Claude Code。
+3. **在列表上方的「新开的 Codex 会话用」里选它**：马上生效，之后每个新开的 Codex 会话都用它，直到你换别的；已经开着的会话不受影响。选「全部 skill」就不再限制。
 
-<p align="center"><img src="docs/codex-zh.png" width="860" alt="在客户端里让 Codex 用一个 Agent"></p>
+<p align="center"><img src="docs/codex-zh.png" width="860" alt="客户端里 Codex 自己的 Agent，列表上方选新开的 Codex 会话用哪个"></p>
 
 ## 概念
 
 - **Agent**：起了名字的一套 skill，比如「Coding」「视频制作」。每个会话用一个。可以整组勾（以后组里新增的 skill 也会带上），也可以只勾其中几个，来自哪里都行。
 - **组**：一起装进来的 skill。每个插件是一组，Claude 自带的是一组。
 - **分类**：你给单独安装的 skill 建的组。一个 skill 可以放进几个分类，Agent 可以整个分类勾选。
-- **平台**：Claude Code 或 Codex。Agent 和分类两边共用，按 skill 的名字对应：一个 Agent 里的 skill，哪个平台有就在哪个平台装上。
+- **平台**：Claude Code 或 Codex。每个平台有自己的 skill、Agent 和分类。把 Agent 复制到另一个平台时，带过去那边也有的 skill，以及它整组勾选的分类。
 
 ## 设置
 
@@ -92,7 +92,7 @@ Codex 没法在第一条消息时弹卡片问你，所以要在开会话之前�
 | 子代理由谁来选 | 主代理 | 也可以选「我来选」：每次弹卡片问你 |
 | 语言 | 自动 | 插件看 Claude Code 的语言设置，没有就看你的第一条消息；客户端跟随 Windows |
 | 开机启动 | 关 | 只有客户端有 |
-| 新开的 Codex 会话用哪套 | 不限制 | 只有客户端有：在 Agent 上点「Codex 用这个」 |
+| 新开的 Codex 会话用哪套 | 全部 skill | 只有客户端有：「新开的 Codex 会话用」里选 Codex 的一个 Agent |
 
 在客户端的「设置」、面板的「管理」页，或者直接在 `library.json` 里改。
 
@@ -102,12 +102,12 @@ Codex 没法在第一条消息时弹卡片问你，所以要在开会话之前�
 
 | 文件 | 存的是 | 谁写 |
 | --- | --- | --- |
-| `library.json` | Agent、分类和设置 | 面板、客户端、你让 Claude 整理时的 Claude、你自己 |
+| `library.json` | Agent、分类和设置：Claude Code 的在最外层，Codex 的在 `platforms.codex` 里 | 面板、客户端、你让 Claude 整理时的 Claude、你自己 |
 | `claude-code-skills.json` | Claude Code 实际有的 skill 及其说明 | 插件 |
 | `next-session.json` | 给下一个会话调好的一套 | 客户端 |
 | `client.json` | 客户端装在哪里 | 客户端 |
 | `codex-skills.json` | Codex 实际有的 skill，照 Codex 自己列的 | 客户端 |
-| `codex.json` | 新开的 Codex 会话用哪个 Agent，以及 Lodestar 为它关掉了哪些 skill | 客户端 |
+| `codex.json` | 新开的 Codex 会话用 Codex 的哪个 Agent，以及 Lodestar 为它关掉了哪些 skill | 客户端 |
 
 为了 Codex，客户端还会往 Codex 自己的 `~/.codex/config.toml` 里写几条，每条都标着 `# lodestar`，别的行一概不动；第一次改之前会把原文件备份成 `config.toml.lodestar-backup`。
 
@@ -160,8 +160,8 @@ Codex 没法在第一条消息时弹卡片问你，所以要在开会话之前�
 - Lodestar 管的是会话里能看到哪些 skill，不管 hook。只靠 hook 工作的插件（比如 security-guidance）照 Claude Code 的方式，在每个会话里都会运行。
 - 客户端暂时只有 Windows 版，安装包没有代码签名。
 - Codex 没法在第一条消息时问你：选好的 Agent 对之后每个新开的 Codex 会话都有效，直到你再换；Codex 重启后再接着聊的旧会话，会换成当前选的这一套。
-- 被 Lodestar 关掉的 skill，在 Codex 自己的技能页里打不开；要用就在客户端里换个 Agent，或者点「改成不限制」。
-- 项目自带的 Codex skill（仓库里的 `.agents/skills`）不受影响。两个平台按名字对应 skill，同一个 skill 在 Codex 里名字不一样的话，在那边就不算在你的分类里。
+- 被 Lodestar 关掉的 skill，在 Codex 自己的技能页里打不开；要用就在客户端里换个 Agent，或者选「全部 skill」。
+- 项目自带的 Codex skill（仓库里的 `.agents/skills`）不受影响。在两个平台之间复制时按名字对应 skill，同一个 skill 在 Codex 里名字不一样的话，就不会跟着过去。
 - 卡片一页最多四个选项（Claude Code 的限制），Agent 超过三个就要翻页。
 - 语言设成「自动」时，插件跟着你的消息，客户端跟着 Windows，两边可能不一样。
 - fork 靠 Claude 的回复认原会话：不到 20 个字的回复不算；复制过来的回复全被压缩掉了，就按「不限制」处理。

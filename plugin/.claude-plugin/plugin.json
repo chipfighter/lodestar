@@ -1,7 +1,7 @@
 {
   "name": "skill-loadout",
-  "version": "0.3.0",
-  "description": "Lodestar: pick a skill set (an Agent) at a new session's first message, and the model sees only that set. Subagents get their own set, and forks keep their parent's. Ask Claude to sort your skills into categories or make Agents; you confirm the changes on a card. In Chinese or English. Agents and categories live in ~/.skill-loadout/library.json, shared with the optional Windows tray client.",
+  "version": "0.4.0",
+  "description": "Lodestar: pick a skill set (an Agent) at a new session's first message, and the model sees only that set. Subagents get their own set, and forks keep their parent's. Ask Claude to sort your skills into categories or make Agents; you confirm the changes on a card. In Chinese or English. Agents and categories live in ~/.skill-loadout/library.json, shared with the optional Windows tray client, which also gives Codex Agents of its own.",
   "author": { "name": "chipfighter" },
   "repository": "https://github.com/chipfighter/lodestar",
   "license": "MIT",

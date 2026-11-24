@@ -28,7 +28,7 @@ Claude Code shows the model every skill you have installed, in every session. Lo
 - **One set per session.** It locks once the session starts. Need one more skill? Name it in your message.
 - **Sort by asking.** Tell Claude to sort your skills into categories or to make an Agent. It reads every skill you have, says its plan, and saves once you confirm the changes on a card.
 - **Subagents included.** Each subagent can get its own set; forks keep their parent's.
-- **Codex too.** Pick an Agent for Codex in the client, and new Codex sessions see only that set. Agents and categories are shared with Claude Code.
+- **Codex too.** Codex gets Agents and categories of its own in the client; pick one, and new Codex sessions see only that set. Copy one over from Claude Code to start.
 - **A tray client for Windows.** Build Agents, browse every skill you have, prepare a one-off set for your next Claude Code session, and switch Codex.
 - **Chinese and English**, in the plugin and the client alike.
 
@@ -72,17 +72,17 @@ Download `Lodestar_<version>_x64-setup.exe` from the [latest release](https://gi
 Codex can't ask at the first message, so you choose before you start. It needs the tray client.
 
 1. **In the client, choose Codex** in the list at the top left. It shows once Codex is installed: the desktop app or the CLI.
-2. **Open an Agent and choose Use for Codex.**
-3. **Start a new Codex session.** It sees only that set until you pick another Agent; sessions already open keep theirs. **Remove the limit** brings every skill back.
+2. **Make Codex an Agent**: choose **New Agent**, or **Copy Agents from Claude Code** to start from one of yours. A copy keeps the skills Codex has too; it doesn't install any. Codex's Agents and categories are its own; changing them leaves Claude Code's alone.
+3. **Pick it under New Codex sessions use**, above the list. It counts at once, for every new Codex session until you pick another; sessions already open keep theirs. **All skills** brings every skill back.
 
-<p align="center"><img src="docs/codex-en.png" width="860" alt="An Agent used for Codex in the client"></p>
+<p align="center"><img src="docs/codex-en.png" width="860" alt="Codex&#39;s own Agents in the client, with the one new Codex sessions use picked above the list"></p>
 
 ## Concepts
 
 - **Agent**: a named set of skills, such as *Coding* or *Video production*. Each session uses one. An Agent takes whole groups, including skills they gain later, or just a few of their skills, from anywhere.
 - **Group**: skills that came together. Each plugin is a group, and so are Claude's built-in skills.
 - **Category**: your own group for skills you installed on their own. A skill can be in several categories, and an Agent can take a whole category.
-- **Platform**: Claude Code or Codex. Agents and categories are shared and match skills by name, so each platform loads the skills of an Agent that it has.
+- **Platform**: Claude Code or Codex. Each has its own skills, Agents and categories. Copying an Agent to the other platform brings the skills that platform has, and the categories the Agent takes whole.
 
 ## Settings
 
@@ -92,7 +92,7 @@ Codex can't ask at the first message, so you choose before you start. It needs t
 | Who picks a subagent's skills | Main agent | Or **Me**: a card asks each time |
 | Language | Automatic | Plugin: Claude Code's language setting, else your first message. Client: Windows' language |
 | Start with Windows | Off | Client only |
-| Agent for new Codex sessions | No limit | Client only: **Use for Codex** on an Agent |
+| Agent for new Codex sessions | All skills | Client only: **New Codex sessions use**, one of Codex's Agents |
 
 Change them in the client's **Settings**, on the panel's **Manage** page, or in `library.json`.
 
@@ -102,12 +102,12 @@ Everything is plain JSON in `~/.skill-loadout/` (or the folder `SKILL_LOADOUT_HO
 
 | File | Holds | Written by |
 | --- | --- | --- |
-| `library.json` | Agents, categories and settings | the panel, the client, Claude when you ask, you |
+| `library.json` | Agents, categories and settings: Claude Code's at the top, Codex's under `platforms.codex` | the panel, the client, Claude when you ask, you |
 | `claude-code-skills.json` | The skills Claude Code has, with their descriptions | the plugin |
 | `next-session.json` | A set prepared for the next session | the client |
 | `client.json` | Where the client is installed | the client |
 | `codex-skills.json` | The skills Codex has, as Codex lists them | the client |
-| `codex.json` | The Agent new Codex sessions use, and the skills Lodestar switched off for it | the client |
+| `codex.json` | Which of Codex's Agents new Codex sessions use, and the skills Lodestar switched off for it | the client |
 
 For Codex, the client also writes entries into Codex's own `~/.codex/config.toml`, each marked `# lodestar`, and no other line. Its first change saves a copy of the file as `config.toml.lodestar-backup`.
 
@@ -160,8 +160,8 @@ The first run creates `library.json` with two example Agents, *Coding* and *Docs
 - Lodestar sets which skills a session sees, not which hooks run. A plugin that works only through hooks, such as security-guidance, runs in every session as Claude Code loads it.
 - The client is Windows-only for now, and its installer isn't code-signed.
 - Codex can't ask at the first message: its Agent holds for every new Codex session until you change it. A session resumed after Codex restarts takes the current Agent.
-- A skill Lodestar switched off for Codex can't be switched back on in Codex's own Skills page. Pick another Agent, or **Remove the limit**, in the client.
-- A project's own Codex skills (`.agents/skills` in a repository) aren't switched. Skills are matched by name across platforms, so a skill named differently in Codex isn't in your categories there.
+- A skill Lodestar switched off for Codex can't be switched back on in Codex's own Skills page. Pick another Agent, or **All skills**, in the client.
+- A project's own Codex skills (`.agents/skills` in a repository) aren't switched. Copying between platforms matches skills by name, so a skill named differently in Codex doesn't come along.
 - A card holds four options, Claude Code's limit, so with more than three Agents it has pages.
 - With the language on Automatic, the plugin follows your messages and the client follows Windows, so the two can differ.
 - Forks are matched by Claude's replies. Replies under 20 characters don't count, and a fork whose copied replies were all compacted away gets **No limit**.

@@ -79,8 +79,10 @@ async function tauriBackend(): Promise<Backend> {
 }
 
 function memoryBackend(): Backend {
-  const isPrepared = new URLSearchParams(window.location.search).has('prepared')
-  const files = new Map<FileName, string>(Object.entries(sampleFiles(Date.now(), isPrepared, navigator.language)) as [FileName, string][])
+  const asked = new URLSearchParams(window.location.search)
+  const files = new Map<FileName, string>(
+    Object.entries(sampleFiles(Date.now(), asked.has('prepared'), navigator.language, asked.has('codexnew'))) as [FileName, string][],
+  )
   const listeners = new Set<(name: FileName) => void>()
   let isAutostart = false
 

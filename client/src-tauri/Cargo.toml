@@ -1,6 +1,6 @@
 [package]
 name = "lodestar"
-version = "0.3.0"
+version = "0.4.0"
 description = "Lodestar's tray client: manage Agents and skill categories, prepare a set for the next Claude Code session, and switch Codex's skills."
 authors = ["chipfighter"]
 license = "MIT"
@@ -16,7 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"

@@ -222,8 +222,8 @@ const LIST_RULES =
   'Agent takes whole groups by id, which brings the skills a group gains later too, and single skills by name. ' +
   '"save" replaces each category and Agent it names and leaves the rest as they are; it refuses the whole save ' +
   'if anything is wrong, and the user confirms the exact changes on a card. Tell the user the plan before saving. ' +
-  "Agents are shared with the user's other agent platforms (Codex): an Agent's groups and skills that Claude Code " +
-  "doesn't have stay in it as they are."
+  "These are Claude Code's own; other agent platforms (Codex) keep theirs apart, in the tray client. An Agent's " +
+  "groups and skills this session doesn't list stay in it as they are."
 
 /** The store's key for the libraries a "save" replaced, newest last, for "undo". */
 const UNDO_KEY = 'undo'
@@ -988,7 +988,7 @@ async function saveAgentFromSession($: EngineInterface, raw: string): Promise<vo
   }
   const lib = await freshLibrary($)
   const isNew = !(name in lib.presets)
-  // Over an Agent that exists, the skills Claude Code doesn't have (Codex's) stay in it.
+  // Over an Agent that exists, what this session doesn't list (a plugin switched off for now) stays in it.
   const groups = await groupsNow($, true)
   const preset = keepUnseen(toPreset(await current($), groups), lib.presets[name], groups, await allNames($))
   await saveLibrary($, { ...lib, presets: { ...lib.presets, [name]: preset } })
@@ -1062,7 +1062,7 @@ async function saveDraft($: EngineInterface): Promise<void> {
     $.ui.toast(t.toast.nameTaken(name))
     return
   }
-  // The skills Claude Code doesn't have (Codex's) stay in the Agent as they were.
+  // What this session doesn't list (a plugin switched off for now) stays in the Agent as it was.
   const groups = await groupsNow($, true)
   const original = edited.original === null ? undefined : lib.presets[edited.original]
   const preset = keepUnseen(toPreset(edited.selected, groups), original, groups, await allNames($))

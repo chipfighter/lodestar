@@ -60,9 +60,9 @@ describe('an Agent for Codex', () => {
     expect(sameSwitchOff(['b', 'a'], ['a', 'b'])).toBe(true)
   })
 
-  it("keeps the other platform's skills when it is edited on one", () => {
+  it("keeps what the skill list can't show when it is edited", () => {
     const model = buildModel(skills, library, CODEX_ALWAYS_ON)
-    // Edited on Codex: the category is untouched, the plugin skill is added; figma and media-use are Claude Code's.
+    // The category is untouched, the plugin skill is added; figma and media-use aren't listed, so they stay.
     const edited = keepUnseen({ groups: ['g:视频'], skills: ['coding-discipline:tdd'] }, library.presets['视频制作'], model.groups, model.names)
     expect(edited).toEqual({ groups: ['g:视频', 'p:figma'], skills: ['coding-discipline:tdd', 'media-use'] })
     // A group or a skill this platform has, unticked here, goes.

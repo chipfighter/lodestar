@@ -2,8 +2,13 @@
 
 import { groupSkills, matchesAny, resolvePreset, toPreset, type Group } from '@shared/listing'
 import type { Library, Preset, SkillEntry } from '../../../plugin/types'
+import type { CodexInfo } from './codex'
+import { libraryOf, type Platform } from './files'
+import type { DataState } from './useData'
 
 export type Model = {
+  /** The platform's own categories and Agents, which the rest is worked out from. */
+  library: Library
   skills: SkillEntry[]
   names: string[]
   byName: Map<string, SkillEntry>
@@ -38,6 +43,7 @@ export function buildModel(
   }
 
   return {
+    library,
     skills: [...skills],
     names,
     byName: new Map(skills.map(skill => [skill.name, skill])),
@@ -47,6 +53,21 @@ export function buildModel(
     usedBy,
     off: new Set(off),
   }
+}
+
+/** The platforms that can be shown: Claude Code, and Codex where it is installed. */
+export function availablePlatforms(codexInfo: CodexInfo | null | undefined): Platform[] {
+  return codexInfo != null ? ['claude', 'codex'] : ['claude']
+}
+
+/** What the pages show for one platform: the skills it has as last read, with its own categories and Agents. */
+export function platformModel(state: DataState, platform: Platform): Model {
+  const library = libraryOf(state.value, platform)
+  if (platform === 'claude') return buildModel(state.catalog.skills, library, state.catalog.alwaysOn)
+  // What the person switched off in Codex themselves; Lodestar's own switches come and go with the Agent.
+  const ours = new Set(state.codex.record?.names ?? [])
+
+  return buildModel(state.codex.catalog.skills, library, state.codex.catalog.alwaysOn, state.codex.off.filter(name => !ours.has(name)))
 }
 
 /** The skills an Agent picks, the always-on ones aside (they are in every set). */

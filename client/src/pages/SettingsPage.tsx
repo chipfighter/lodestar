@@ -25,6 +25,7 @@ import type { Language } from '../../../plugin/types'
 import { FILES } from '../data/files'
 import type { Actions, DataState } from '../data/useData'
 import { timeAgo, useStrings } from '../i18n'
+import { CodexDropdown, useCodexChoice } from '../ui/CodexChoice'
 import { PageHeader, Section, SettingRow, useNotify } from '../ui/common'
 
 const REPOSITORY = 'https://github.com/chipfighter/lodestar'
@@ -81,9 +82,7 @@ export function SettingsPage({ state, actions }: { state: DataState; actions: Ac
     )
 
   const codex = state.codex
-  const codexAgent = codex.record?.agent ?? null
-  const codexUsing =
-    codexAgent === null ? t.codexAll : codexAgent in state.value.library.presets ? strings.quote(codexAgent) : t.codexGone(codexAgent)
+  const codexChoice = useCodexChoice(state, actions)
   const codexSkillsText = codex.isRefreshing ? (
     <Caption1 className={styles.dim}>{t.codexReading}</Caption1>
   ) : codex.error !== null ? (
@@ -127,13 +126,16 @@ export function SettingsPage({ state, actions }: { state: DataState; actions: Ac
               <SettingRow title={t.codexNone} hint={t.codexNoneHint} />
             ) : (
               <>
-                <SettingRow title={t.codexUsing} hint={codexUsing}>
-                  <Button
-                    disabled={codexAgent === null}
-                    onClick={() => run(actions.useForCodex(null).then(() => undefined), strings.codex.setAllDone)}
-                  >
-                    {strings.codex.setAll}
-                  </Button>
+                <SettingRow
+                  title={t.codexUsing}
+                  hint={
+                    <span className={styles.status}>
+                      <span className={codexChoice.isGone ? styles.bad : undefined}>{codexChoice.status}</span>
+                      <span>{t.codexUsingHint}</span>
+                    </span>
+                  }
+                >
+                  <CodexDropdown choice={codexChoice} label={t.codexUsing} />
                 </SettingRow>
                 <SettingRow title={t.codexSkills} hint={codexSkillsText}>
                   <Button icon={<ArrowSync20Regular />} disabled={codex.isRefreshing} onClick={() => run(actions.refreshCodex())}>

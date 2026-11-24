@@ -32,19 +32,19 @@ import {
 } from '@fluentui/react-components'
 import {
   Add20Regular,
-  CheckmarkCircle20Filled,
   Copy20Regular,
   Delete20Regular,
   Info16Regular,
   MoreHorizontal20Regular,
-  Play20Regular,
   Rocket20Regular,
   Save20Regular,
 } from '@fluentui/react-icons'
 
-import { MAX_NAME, RESERVED_NAMES, keepUnseen, plainName } from '@shared/listing'
+import { MAX_NAME, RESERVED_NAMES, agentCopy, keepUnseen, plainName } from '@shared/listing'
 import type { Preset } from '../../../plugin/types'
+import { libraryOf } from '../data/files'
 import {
+  availablePlatforms,
   changesFrom,
   copyName,
   formatTokens,
@@ -58,7 +58,9 @@ import {
 import { NameTakenError, type Actions, type DataState } from '../data/useData'
 import { timeLeft, useStrings } from '../i18n'
 import { PageHeader, useNotify } from '../ui/common'
-import { usePlatform } from '../ui/platform'
+import { CodexChoice } from '../ui/CodexChoice'
+import { CopyMenu, platformName, type CopyItem } from '../ui/CopyMenu'
+import { usePlatform, type Platform } from '../ui/platform'
 import { SkillPicker } from '../ui/SkillPicker'
 
 type Draft = {
@@ -159,7 +161,9 @@ const useStyles = makeStyles({
   actions: { display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' },
   placeholder: { margin: 'auto', color: tokens.colorNeutralForeground3, padding: '24px', textAlign: 'center' },
   itemTop: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 },
-  inUse: { color: tokens.colorPaletteGreenForeground1 },
+  empty: { margin: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', padding: '24px', textAlign: 'center' },
+  emptyText: { color: tokens.colorNeutralForeground3, maxWidth: '380px' },
+  emptyActions: { display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' },
 })
 
 function cleanName(raw: string): string {
@@ -172,10 +176,10 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
   const t = strings.agents
   const notify = useNotify()
   const platform = usePlatform()
-  const presets = state.value.library.presets
+  // This platform's own Agents.
+  const presets = model.library.presets
   const names = Object.keys(presets)
-  const codexAgent = state.codex.record?.agent ?? null
-  const [isApplying, setIsApplying] = useState(false)
+  const codexAgent = platform === 'codex' ? (state.codex.record?.agent ?? null) : null
 
   const [draft, setDraft] = useState<Draft | null>(() => {
     const first = names[0]
@@ -204,13 +208,29 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
     })
   }, [presets, model])
 
-  // Another platform has other skills: the Agent shows as saved, with that platform's.
-  const [shownFor, setShownFor] = useState(platform)
-  if (shownFor !== platform) {
-    setShownFor(platform)
-    const preset = draft?.original == null ? undefined : presets[draft.original]
-    if (draft !== null && draft.original !== null && preset !== undefined) setDraft(draftOf(model, draft.original, preset))
-  }
+  // An Agent copied from another platform opens once the file has it.
+  const [toOpen, setToOpen] = useState<string | null>(null)
+  useEffect(() => {
+    const preset = toOpen === null ? undefined : presets[toOpen]
+    if (toOpen === null || preset === undefined) return
+    setDraft(draftOf(model, toOpen, preset))
+    setNameError(undefined)
+    setToOpen(null)
+  }, [toOpen, presets, model])
+
+  // The other platforms' Agents, to copy here: each with how many of its skills this platform has.
+  const copySources = availablePlatforms(state.codex.info)
+    .filter(other => other !== platform)
+    .map(from => {
+      const source = libraryOf(state.value, from)
+      const items: CopyItem[] = Object.keys(source.presets).map(name => ({
+        name,
+        size: agentCopy(source, model.library, name, model.skills)?.size ?? 0,
+        isHere: name in presets,
+      }))
+      return { from, items }
+    })
+    .filter(source => source.items.length > 0)
 
   const guard = (then: () => void): void => {
     if (isDirty) setPending({ then })
@@ -254,7 +274,7 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
       return
     }
     try {
-      // Agents are shared: the skills this platform doesn't have stay in the Agent as they were.
+      // What the skill list can't show now (a plugin switched off for a while) stays in the Agent as it was.
       const preset = keepUnseen(selectionPreset(model, draft.selected), draft.source, model.groups, model.names)
       await actions.saveAgent(draft.original, name, preset)
       notify(draft.original === null ? t.created(name) : t.saved(name))
@@ -276,17 +296,31 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
     }
   }
 
-  const useForCodex = async (name: string): Promise<void> => {
-    setIsApplying(true)
-    try {
-      const off = await actions.useForCodex(name)
-      notify(t.codexDone(name, off))
-    } catch (error) {
-      notify(strings.codex.failed(String(error instanceof Error ? error.message : error)), 'error')
-    } finally {
-      setIsApplying(false)
-    }
-  }
+  const copyFrom = (from: Platform, picked: string[]): void =>
+    guard(() =>
+      void actions
+        .copyAgents(from, picked, (name, taken) => copyName(name, taken, t.copySuffix))
+        .then(given => {
+          const first = given[0]
+          if (first === undefined) return
+          notify(given.length === 1 ? t.copied(first, platformName(from)) : t.copiedMany(given.length, platformName(from)))
+          setToOpen(first)
+        })
+        .catch(error => notify(String(error), 'error')),
+    )
+
+  const copyMenus = (appearance: 'subtle' | 'secondary') =>
+    copySources.map(source => (
+      <CopyMenu
+        key={source.from}
+        from={source.from}
+        to={platform}
+        label={strings.copyAgentsFrom(platformName(source.from))}
+        items={source.items}
+        appearance={appearance}
+        onCopy={picked => copyFrom(source.from, picked)}
+      />
+    ))
 
   const remove = async (name: string): Promise<void> => {
     setDeleting(null)
@@ -305,7 +339,14 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
     <div className={styles.page}>
       <PageHeader title={t.title} intro={platform === 'codex' ? t.introCodex : t.intro} />
       {platform === 'codex' ? (
-        <CodexBanner state={state} actions={actions} model={model} />
+        <>
+          <CodexChoice state={state} actions={actions} />
+          {state.codex.error === null ? null : (
+            <MessageBar className={styles.banner} intent="error" layout="multiline">
+              <MessageBarBody>{strings.codex.failed(state.codex.error)}</MessageBarBody>
+            </MessageBar>
+          )}
+        </>
       ) : (
         <NextBanner state={state} actions={actions} model={model} />
       )}
@@ -314,6 +355,7 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
           <Button icon={<Add20Regular />} onClick={() => startNew()}>
             {t.create}
           </Button>
+          {names.length > 0 ? copyMenus('subtle') : null}
           <div className={styles.list} role="listbox" aria-label={t.title}>
             {names.length === 0 ? (
               <Caption1 className={styles.itemMeta}>{t.none}</Caption1>
@@ -333,7 +375,7 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
                   >
                     <span className={styles.itemTop}>
                       <Body1Strong className={styles.itemName}>{name}</Body1Strong>
-                      {platform === 'codex' && codexAgent === name ? (
+                      {codexAgent === name ? (
                         <Badge appearance="tint" color="success" size="small">
                           {t.codexBadge}
                         </Badge>
@@ -352,8 +394,20 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
         </div>
 
         <div className={styles.editor}>
-          {draft === null ? (
-            <Body1 className={styles.placeholder}>{names.length === 0 ? t.noneHint : t.pickOne}</Body1>
+          {draft === null && names.length === 0 ? (
+            <div className={styles.empty}>
+              <Body1 className={styles.emptyText}>
+                {copySources[0] === undefined ? t.noneHint : t.noneHintCopy(platformName(copySources[0].from))}
+              </Body1>
+              <div className={styles.emptyActions}>
+                <Button appearance="primary" icon={<Add20Regular />} onClick={() => startNew()}>
+                  {t.create}
+                </Button>
+                {copyMenus('secondary')}
+              </div>
+            </div>
+          ) : draft === null ? (
+            <Body1 className={styles.placeholder}>{t.pickOne}</Body1>
           ) : (
             <>
               <div className={styles.editorHead}>
@@ -441,29 +495,13 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
                   ) : null}
                 </div>
                 <div className={styles.actions}>
-                  {platform === 'codex' ? (
-                    draft.original !== null && codexAgent === draft.original && !isDirty ? (
-                      <Button icon={<CheckmarkCircle20Filled className={styles.inUse} />} disabled>
-                        {t.inUseByCodex}
-                      </Button>
-                    ) : (
-                      <Tooltip content={isDirty ? t.saveFirst : t.useForCodexHint} relationship="description">
-                        <Button
-                          icon={<Play20Regular />}
-                          disabled={isDirty || draft.original === null || isApplying || model.names.length === 0}
-                          onClick={() => draft.original !== null && void useForCodex(draft.original)}
-                        >
-                          {t.useForCodex}
-                        </Button>
-                      </Tooltip>
-                    )
-                  ) : (
+                  {platform === 'claude' ? (
                     <Tooltip content={t.prepareHint} relationship="description">
                       <Button icon={<Rocket20Regular />} onClick={() => void prepare()} disabled={model.names.length === 0}>
                         {t.prepare}
                       </Button>
                     </Tooltip>
-                  )}
+                  ) : null}
                   <Button appearance="primary" icon={<Save20Regular />} onClick={() => void save()} disabled={!isDirty}>
                     {strings.save}
                   </Button>
@@ -502,7 +540,7 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
         <DialogSurface>
           <DialogBody>
             <DialogTitle>{deleting === null ? '' : t.deleteTitle(deleting)}</DialogTitle>
-            <DialogContent>{t.deleteBody}</DialogContent>
+            <DialogContent>{deleting !== null && deleting === codexAgent ? t.deleteBodyCodex : t.deleteBody}</DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setDeleting(null)}>
                 {strings.cancel}
@@ -515,63 +553,6 @@ export function AgentsPage({ state, actions, model }: { state: DataState; action
         </DialogSurface>
       </Dialog>
     </div>
-  )
-}
-
-/** What new Codex sessions load: an Agent's skills, or every skill; and what went wrong with Codex last, if anything did. */
-function CodexBanner({ state, actions, model }: { state: DataState; actions: Actions; model: Model }) {
-  const styles = useStyles()
-  const strings = useStrings()
-  const t = strings.codex
-  const notify = useNotify()
-  const [isClearing, setIsClearing] = useState(false)
-  const agent = state.codex.record?.agent ?? null
-  const preset = agent === null ? undefined : state.value.library.presets[agent]
-
-  const clear = async (): Promise<void> => {
-    setIsClearing(true)
-    try {
-      await actions.useForCodex(null)
-      notify(t.setAllDone)
-    } catch (error) {
-      notify(t.failed(String(error instanceof Error ? error.message : error)), 'error')
-    } finally {
-      setIsClearing(false)
-    }
-  }
-  const clearButton = (
-    <MessageBarActions>
-      <Button size="small" disabled={isClearing} onClick={() => void clear()}>
-        {t.setAll}
-      </Button>
-    </MessageBarActions>
-  )
-  // Skills the person switched off in Codex stay off whatever the Agent.
-  const seen = (names: Iterable<string>): number => [...names].filter(name => !model.off.has(name)).length
-
-  return (
-    <>
-      {state.codex.error === null ? null : (
-        <MessageBar className={styles.banner} intent="error" layout="multiline">
-          <MessageBarBody>{t.failed(state.codex.error)}</MessageBarBody>
-        </MessageBar>
-      )}
-      {agent === null ? (
-        <MessageBar className={styles.banner} intent="info">
-          <MessageBarBody>{t.all(seen(model.names))}</MessageBarBody>
-        </MessageBar>
-      ) : preset === undefined ? (
-        <MessageBar className={styles.banner} intent="warning">
-          <MessageBarBody>{t.gone(agent)}</MessageBarBody>
-          {clearButton}
-        </MessageBar>
-      ) : (
-        <MessageBar className={styles.banner} intent="success">
-          <MessageBarBody>{t.using(agent, seen(loadedOf(model, presetSkills(model, preset))))}</MessageBarBody>
-          {clearButton}
-        </MessageBar>
-      )}
-    </>
   )
 }
 
@@ -597,7 +578,7 @@ function NextBanner({ state, actions, model }: { state: DataState; actions: Acti
   }
 
   const set = presetSkills(model, next.next.preset)
-  const basePreset = next.next.basedOn === null ? undefined : state.value.library.presets[next.next.basedOn]
+  const basePreset = next.next.basedOn === null ? undefined : model.library.presets[next.next.basedOn]
   const based =
     basePreset === undefined || next.next.basedOn === null
       ? t.custom

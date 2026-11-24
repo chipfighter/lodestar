@@ -219,9 +219,10 @@ export function toPreset(selected: readonly string[], groups: readonly Group[]):
 }
 
 /**
- * An Agent as edited with one platform's skills, with what that platform can't see kept as it was:
- * whole groups it doesn't have (or that are empty there), and skills nothing there answers to.
- * Agents are shared by Claude Code and Codex, so an edit made in one keeps the other's skills.
+ * An Agent as edited with the skills its platform lists now, with what that list can't show kept as
+ * it was: whole groups it doesn't have (or that are empty there), and skills nothing there answers
+ * to. A plugin switched off for a while keeps its place in the Agent, and so do the skills an Agent
+ * still holds from when Claude Code and Codex shared their Agents.
  */
 export function keepUnseen(edited: Preset, original: Preset | undefined, groups: readonly Group[], names: readonly string[]): Preset {
   if (original === undefined) return edited
@@ -230,6 +231,86 @@ export function keepUnseen(edited: Preset, original: Preset | undefined, groups:
   const skillsKept = original.skills.filter(pattern => !names.some(name => matches(pattern, name)) && !edited.skills.includes(pattern))
 
   return { groups: [...edited.groups, ...groupsKept], skills: [...edited.skills, ...skillsKept] }
+}
+
+/** A platform's library before the person makes anything in it: no categories, no Agents. */
+export const EMPTY_LIBRARY: Library = { groups: {}, presets: {} }
+
+/**
+ * What copying one Agent to another platform brings: the parts of it that platform has, the
+ * categories it takes whole that the platform lacks, and how many skills it loads there.
+ */
+export type AgentCopy = { preset: Preset; categories: Record<string, string[]>; size: number }
+
+/**
+ * Agent `name` of library `from` as a copy into library `to` would be, for a platform with `skills`
+ * (null: not known yet, so all of it is kept). The categories it takes whole come along, unless `to`
+ * has one of the same name, which it then takes instead. A plugin, a source or a skill the platform
+ * doesn't have stays behind, and so does a category with none of its skills.
+ */
+export function agentCopy(from: Library, to: Library, name: string, skills: readonly SkillEntry[] | null): AgentCopy | undefined {
+  const preset = from.presets[name]
+  if (preset === undefined) return undefined
+  const categories: Record<string, string[]> = {}
+  for (const id of preset.groups) {
+    const label = id.slice(2)
+    const patterns = from.groups[label]
+    if (id.startsWith('g:') && patterns !== undefined && !(label in to.groups)) categories[label] = [...patterns]
+  }
+  if (skills === null) return { preset: { groups: [...preset.groups], skills: [...preset.skills] }, categories, size: 0 }
+  const names = skills.map(skill => skill.name)
+  const groups = groupSkills(skills, { ...to.groups, ...categories }, true)
+  const there = new Set(groups.filter(group => group.names.length > 0).map(group => group.id))
+  const kept: Preset = {
+    groups: preset.groups.filter(id => there.has(id)),
+    skills: preset.skills.filter(pattern => names.some(one => matches(pattern, one))),
+  }
+
+  return {
+    preset: kept,
+    categories: Object.fromEntries(Object.entries(categories).filter(([label]) => kept.groups.includes(`g:${label}`))),
+    size: resolvePreset(kept, groups, names).length,
+  }
+}
+
+/**
+ * Copies Agents of library `from` into library `to`, one after another and after `to`'s own (see
+ * agentCopy). A name `to` already has takes the one `rename` gives. Answers the library and the
+ * names the copies got.
+ */
+export function copyAgents(
+  from: Library,
+  to: Library,
+  names: readonly string[],
+  skills: readonly SkillEntry[] | null,
+  rename: (name: string, taken: readonly string[]) => string,
+): { library: Library; names: string[] } {
+  let library = to
+  const given: string[] = []
+  for (const name of names) {
+    const copy = agentCopy(from, library, name, skills)
+    if (copy === undefined) continue
+    const taken = Object.keys(library.presets)
+    const as = taken.includes(name) ? rename(name, taken) : name
+    library = { groups: { ...library.groups, ...copy.categories }, presets: { ...library.presets, [as]: copy.preset } }
+    given.push(as)
+  }
+
+  return { library, names: given }
+}
+
+/** The categories of library `from` that library `to` lacks and that hold some of `skills`' loose ones, with how many each holds. */
+export function categoryCopies(
+  from: Library,
+  to: Library,
+  skills: readonly SkillEntry[],
+): { label: string; patterns: string[]; size: number }[] {
+  const loose = skills.filter(isLoose).map(skill => skill.name)
+
+  return Object.entries(from.groups)
+    .filter(([label]) => !(label in to.groups))
+    .map(([label, patterns]) => ({ label, patterns: [...patterns], size: loose.filter(name => inGroup(patterns, name)).length }))
+    .filter(one => one.size > 0)
 }
 
 /** A stable signature of a selection, to compare two of them. */
@@ -492,6 +573,27 @@ export function readLibraryFile(
 
 /** The fields of library.json this plugin reads; another tool's own fields are kept as they are. */
 const LIBRARY_KEYS = new Set(['version', 'askOnNewSession', 'subagentPicker', 'language', 'groups', 'agents', 'presets'])
+
+/**
+ * Another platform's own categories and Agents, from library.json's other fields (`extra`): the
+ * block `platforms.<id>`, shaped as Claude Code's are at the top of the file (`groups`, `agents`).
+ * Undefined while the file has no block for it.
+ */
+export function readPlatform(extra: Readonly<Record<string, unknown>>, id: string): Library | undefined {
+  const block = isRecord(extra.platforms) ? extra.platforms[id] : undefined
+  if (!isRecord(block)) return undefined
+  const { groups, presets } = normalizeConfig({ groups: block.groups, presets: block.agents })
+
+  return { groups, presets }
+}
+
+/** library.json's other fields with platform `id`'s block set to `library`; other platforms' blocks, and fields of its own this doesn't know, kept. */
+export function withPlatform(extra: Readonly<Record<string, unknown>>, id: string, library: Library): Record<string, unknown> {
+  const platforms = isRecord(extra.platforms) ? extra.platforms : {}
+  const old = platforms[id]
+
+  return { ...extra, platforms: { ...platforms, [id]: { ...(isRecord(old) ? old : {}), groups: library.groups, agents: library.presets } } }
+}
 
 /** library.json's text, in the format other tools read and write, with their own fields (`extra`) kept. */
 export function libraryFileText(library: Library, prefs: Prefs, extra: Readonly<Record<string, unknown>> = {}): string {

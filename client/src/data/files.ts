@@ -1,6 +1,6 @@
 // The files the client shares with the plugin, in the data folder (~/.skill-loadout).
 
-import { normalizeConfig, readLibraryFile, readNextSession } from '@shared/listing'
+import { EMPTY_LIBRARY, copyAgents, normalizeConfig, readLibraryFile, readNextSession, readPlatform, withPlatform } from '@shared/listing'
 import type { Library, NextSession, Prefs, SkillEntry } from '../../../plugin/types'
 
 import defaults from '../../../plugin/loadout.json'
@@ -18,8 +18,24 @@ export const FILES = {
 
 export type FileName = (typeof FILES)[keyof typeof FILES]
 
-/** library.json as read: the groups and Agents, the settings, and fields other tools keep there. */
+/** library.json as read: Claude Code's groups and Agents, the settings, and the other fields (other platforms' blocks among them). */
 export type LibraryValue = { library: Library; prefs: Prefs; extra: Record<string, unknown> }
+
+/** The agent platforms the client manages: Claude Code, and Codex where it is installed. */
+export type Platform = 'claude' | 'codex'
+
+/**
+ * One platform's own categories and Agents. Claude Code's are at the top of library.json, where the
+ * plugin reads them; another platform's are in its block under `platforms`, empty until there is one.
+ */
+export function libraryOf(value: LibraryValue, platform: Platform): Library {
+  return platform === 'claude' ? value.library : (readPlatform(value.extra, platform) ?? EMPTY_LIBRARY)
+}
+
+/** library.json's value with one platform's categories and Agents replaced, the others' kept. */
+export function withLibrary(value: LibraryValue, platform: Platform, library: Library): LibraryValue {
+  return platform === 'claude' ? { ...value, library } : { ...value, extra: withPlatform(value.extra, platform, library) }
+}
 
 /** How reading library.json went. */
 export type LibraryStatus =
@@ -156,6 +172,20 @@ export function parseCodexRecord(text: string | null): CodexRecord | null {
     appliedAt: typeof file.appliedAt === 'number' ? file.appliedAt : null,
     config: typeof file.config === 'string' ? file.config : null,
   }
+}
+
+/**
+ * Codex's own library made from the Agent it was using (`record`), where library.json has no Codex
+ * block yet: before Codex had Agents of its own, it used Claude Code's. The Agent comes over with the categories it
+ * takes whole, as much of it as Codex has (`skills`; all of it while they aren't known), so new Codex
+ * sessions keep loading what they did. Null when there is nothing to move.
+ */
+export function movedCodexLibrary(value: LibraryValue, record: CodexRecord | null, skills: readonly SkillEntry[]): LibraryValue | null {
+  const agent = record?.agent ?? null
+  if (agent === null || readPlatform(value.extra, 'codex') !== undefined || !(agent in value.library.presets)) return null
+  const { library } = copyAgents(value.library, EMPTY_LIBRARY, [agent], skills.length > 0 ? skills : null, name => name)
+
+  return withLibrary(value, 'codex', library)
 }
 
 /** The skills codex-skills.json says are switched off in Codex as it was last read. */

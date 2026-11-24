@@ -1,5 +1,5 @@
 // Which agent platform the pages show: Claude Code, or Codex where it is installed, and more later.
-// Agents and categories are shared; the skills, and what "use this Agent" means, are each platform's own.
+// Each platform has its own skills, its own categories and Agents, and its own way of choosing an Agent.
 
 import { createContext, useContext } from 'react'
 
@@ -7,9 +7,10 @@ import { Caption1, Dropdown, Option, makeStyles, mergeClasses, tokens } from '@f
 
 import claudeLogo from '../assets/platforms/claude.svg'
 import codexLogo from '../assets/platforms/codex.png'
+import type { Platform } from '../data/files'
 import { useStrings } from '../i18n'
 
-export type Platform = 'claude' | 'codex'
+export type { Platform }
 
 /** The platforms in the order the picker lists them, each with its own mark (Anthropic's and OpenAI's, shown only to name them). */
 export const PLATFORMS: readonly { id: Platform; name: string; logo: string }[] = [

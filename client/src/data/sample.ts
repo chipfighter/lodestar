@@ -124,21 +124,9 @@ const LIBRARY = {
     写作: ['meeting-notes', 'release-notes', 'brand-voice'],
   },
   agents: {
-    // Claude Code's own skills, and Codex's: each platform loads the ones it has.
     Coding: {
-      groups: ['p:coding-discipline'],
-      skills: [
-        'code-review',
-        'simplify',
-        'init',
-        'run',
-        'claude-api',
-        'fewer-permission-prompts',
-        'security-review',
-        'sql-helper',
-        'regex-coach',
-        'pr-triage',
-      ],
+      groups: [],
+      skills: ['code-review', 'simplify', 'init', 'run', 'claude-api', 'fewer-permission-prompts', 'security-review', 'sql-helper', 'regex-coach'],
     },
     Docs: {
       groups: [],
@@ -147,13 +135,25 @@ const LIBRARY = {
     视频制作: { groups: ['g:视频剪辑', 'p:figma'], skills: ['image-prompt'] },
     写作助手: { groups: ['g:写作'], skills: ['anthropic-skills:docs', 'anthropic-skills:docx'] },
   },
+  // Codex's own categories and Agents: one copied from Claude Code and changed, the others made for Codex.
+  platforms: {
+    codex: {
+      groups: { 视频剪辑: ['remotion-*', 'hyperframes', 'media-use'] },
+      agents: {
+        Coding: { groups: ['p:coding-discipline'], skills: ['sql-helper', 'regex-coach', 'pr-triage'] },
+        视频制作: { groups: ['g:视频剪辑'], skills: ['image-prompt', 'imagegen'] },
+        Office: { groups: ['p:documents', 'p:pdf', 'p:spreadsheets'], skills: [] },
+      },
+    },
+  },
 }
 
 /**
  * The data folder's files as a person who uses the plugin might have them, `now` being the time they
- * are read; with `isPrepared`, a set prepared for the next session a few minutes ago (`?prepared`).
+ * are read; with `isPrepared`, a set prepared for the next session a few minutes ago (`?prepared`); with
+ * `isCodexNew`, Codex as the client first finds it: no Agents or categories of its own, every skill on (`?codexnew`).
  */
-export function sampleFiles(now: number, isPrepared = false, language = 'zh'): Partial<Record<FileName, string>> {
+export function sampleFiles(now: number, isPrepared = false, language = 'zh', isCodexNew = false): Partial<Record<FileName, string>> {
   const catalog = {
     platform: 'claude-code',
     updatedAt: new Date(now - 3 * 60_000).toISOString(),
@@ -171,11 +171,13 @@ export function sampleFiles(now: number, isPrepared = false, language = 'zh'): P
   }
 
   // New Codex sessions use an Agent named in the language shown; the client works out what it switches off as it starts.
-  const agent = language.toLowerCase().startsWith('zh') ? '视频制作' : 'Coding'
+  const agent = isCodexNew ? null : language.toLowerCase().startsWith('zh') ? '视频制作' : 'Coding'
   const codex = { version: 1, agent, names: [], appliedAt: now - 20 * 60_000, config: SAMPLE_CODEX_INFO.config }
+  const { platforms, ...claudeOnly } = LIBRARY
+  const library = isCodexNew ? claudeOnly : { ...claudeOnly, platforms }
 
   return {
-    [FILES.library]: `${JSON.stringify(LIBRARY, null, 2)}\n`,
+    [FILES.library]: `${JSON.stringify(library, null, 2)}\n`,
     [FILES.catalog]: `${JSON.stringify(catalog, null, 2)}\n`,
     [FILES.codex]: `${JSON.stringify(codex, null, 2)}\n`,
     ...(isPrepared ? { [FILES.next]: `${JSON.stringify(prepared, null, 2)}\n` } : {}),

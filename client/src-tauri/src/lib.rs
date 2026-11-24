@@ -13,6 +13,7 @@ use std::{
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{
+    image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State, WindowEvent, Wry,
@@ -34,6 +35,31 @@ const FILES: [&str; 6] = [
 
 /// What the login item starts the app with: it waits in the tray, its window hidden.
 const MINIMIZED: &str = "--minimized";
+
+/// The app icon's frames, each a PNG: the small-size cut up to 48 px, the full drawing above it.
+const ICON_ICO: &[u8] = include_bytes!("../icons/icon.ico");
+
+/// The PNG of the frame of an .ico file for an icon drawn `size` pixels square: that size, else
+/// the next larger one (scaled down reads better than scaled up), else the largest there is.
+fn ico_frame(ico: &[u8], size: u32) -> Option<&[u8]> {
+    let count = usize::from(u16::from_le_bytes([*ico.get(4)?, *ico.get(5)?]));
+    let mut frames: Vec<(u32, &[u8])> = (0..count)
+        .filter_map(|index| {
+            let entry = ico.get(6 + index * 16..6 + index * 16 + 16)?;
+            let side = if entry[0] == 0 { 256 } else { u32::from(entry[0]) };
+            let length = usize::try_from(u32::from_le_bytes(entry[8..12].try_into().ok()?)).ok()?;
+            let offset = usize::try_from(u32::from_le_bytes(entry[12..16].try_into().ok()?)).ok()?;
+            let data = ico.get(offset..offset.checked_add(length)?)?;
+            data.starts_with(b"\x89PNG").then_some((side, data))
+        })
+        .collect();
+    frames.sort_by_key(|(side, _)| *side);
+    frames
+        .iter()
+        .find(|(side, _)| *side >= size)
+        .or(frames.last())
+        .map(|(_, data)| *data)
+}
 
 /// Whether the window stays hidden when the page first asks to show it (a start at login).
 struct StartHidden(AtomicBool);
@@ -210,8 +236,16 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 show_window(tray.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
+    // The notification area draws its icons at 16 px times the display's scale (24 px at 150 %).
+    // The icon's own frame for that size, its small-size cut, is used: Tauri's default is the
+    // largest frame, the full drawing, which loses its detail when shrunk that far.
+    let scale = app.primary_monitor().ok().flatten().map_or(1.0, |monitor| monitor.scale_factor());
+    let size = (16.0 * scale).round() as u32;
+    let icon = ico_frame(ICON_ICO, size)
+        .and_then(|png| Image::from_bytes(png).ok())
+        .or_else(|| app.default_window_icon().cloned());
+    if let Some(icon) = icon {
+        tray = tray.icon(icon);
     }
     tray.build(app)?;
     app.manage(TrayItems { open, quit });
@@ -297,4 +331,19 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("the app failed to start");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tray_gets_the_frame_drawn_for_its_size() {
+        let side = |size| Image::from_bytes(ico_frame(ICON_ICO, size).unwrap()).unwrap().width();
+        // At 100 %, 125 %, 150 % and 200 %: the small-size cut's own frames, the next larger in between.
+        assert_eq!([side(16), side(20), side(24), side(32)], [16, 24, 24, 32]);
+        // Larger than any frame: the largest.
+        assert_eq!(side(512), 256);
+        assert_eq!(ico_frame(b"not an icon", 16), None);
+    }
 }
