@@ -340,8 +340,8 @@ mod tests {
     #[test]
     fn the_tray_gets_the_frame_drawn_for_its_size() {
         let side = |size| Image::from_bytes(ico_frame(ICON_ICO, size).unwrap()).unwrap().width();
-        // At 100 %, 125 %, 150 % and 200 %: the small-size cut's own frames, the next larger in between.
-        assert_eq!([side(16), side(20), side(24), side(32)], [16, 24, 24, 32]);
+        // At 100 %, 125 %, 150 %, 175 % and 200 %: the small-size cut's own frames, the next larger in between.
+        assert_eq!([side(16), side(20), side(24), side(28), side(32)], [16, 20, 24, 30, 32]);
         // Larger than any frame: the largest.
         assert_eq!(side(512), 256);
         assert_eq!(ico_frame(b"not an icon", 16), None);

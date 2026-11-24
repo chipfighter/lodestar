@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
   <title>Lodestar</title>
-  <!-- Lodestar app icon: star trails round the lodestar, on an ink tile. 64 px and up; source-small.svg draws 16-48 px. -->
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="#16161D"/>
-  <path d="M140.58 70.35 A55.5 55.5 0 0 1 102.62 174.65 A10.1 10.1 0 0 1 109.53 155.67 A35.3 35.3 0 0 0 133.67 89.33 A10.1 10.1 0 0 1 140.58 70.35 Z" fill="#F4EFE6"/><path d="M153.24 35.58 A92.5 92.5 0 1 1 34.68 154.14 A10.1 10.1 0 0 1 53.66 147.23 A72.3 72.3 0 1 0 146.33 54.56 A10.1 10.1 0 0 1 153.24 35.58 Z" fill="#F4EFE6"/><circle cx="121.6" cy="122.5" r="18.5" fill="#FF5A36"/>
+  <!-- Lodestar app icon: star trails round the lodestar, on a white tile. 60 px and up; source-small.svg draws 16-48 px. -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#FFFFFF"/>
+  <path d="M126.98 75.78A51.2 51.2 0 1 1 75.78 126.98L90.82 126.98A36.16 36.16 0 1 0 126.98 90.82ZM46.98 126.98A80 80 0 0 1 126.98 46.98L126.98 62.66A64.32 64.32 0 0 0 62.66 126.98ZM206.98 126.98A80 80 0 0 1 126.98 206.98L126.98 191.3A64.32 64.32 0 0 0 191.3 126.98Z" fill="#16161D"/><circle cx="126.98" cy="126.98" r="11.6" fill="#FF5A36"/>
 </svg>

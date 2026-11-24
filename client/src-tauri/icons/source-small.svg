@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
   <title>Lodestar</title>
-  <!-- Lodestar app icon, small-size cut for 16-48 px and the tray: a bigger dot, wider gaps, heavier arcs, a full tile. -->
-  <rect x="0" y="0" width="256" height="256" rx="58" fill="#16161D"/>
-  <path d="M149.43 57.14 A72 72 0 0 1 100.17 192.46 A13.5 13.5 0 0 1 109.41 167.09 A45 45 0 0 0 140.19 82.51 A13.5 13.5 0 0 1 149.43 57.14 Z" fill="#F4EFE6"/><path d="M165.5 12.98 A119 119 0 1 1 12.98 165.5 A13.5 13.5 0 0 1 38.35 156.27 A92 92 0 1 0 156.27 38.35 A13.5 13.5 0 0 1 165.5 12.98 Z" fill="#F4EFE6"/><circle cx="124.8" cy="124.8" r="25" fill="#FF5A36"/>
+  <!-- Lodestar app icon, small-size cut for 16-48 px and the tray: a bigger dot, heavier rings, a full tile. -->
+  <rect x="0" y="0" width="256" height="256" rx="58" fill="#FFFFFF"/>
+  <path d="M128 64A64 64 0 1 1 64 128L88 128A40 40 0 1 0 128 88ZM20 128A108 108 0 0 1 128 20L128 46A82 82 0 0 0 46 128ZM236 128A108 108 0 0 1 128 236L128 210A82 82 0 0 0 210 128Z" fill="#16161D"/><circle cx="128" cy="128" r="20" fill="#FF5A36"/>
 </svg>

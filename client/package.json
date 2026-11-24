@@ -1,7 +1,7 @@
 {
   "name": "lodestar-client",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Lodestar's tray client: manage Agents and skill groups, and prepare a set for the next Claude Code session.",
   "license": "MIT",
   "type": "module",
